@@ -44,16 +44,21 @@ def prepare(args, context):
     exclude_local(repo)
     clean(repo)
     git(repo, 'fetch', 'origin', 'main')
-    exists = git(repo, 'branch', '--list', binding['branch'])
+    branch = binding['branch']
+    submission = context['observed'][0]
+    # A fresh correction checkout leaves the earlier worktree's branch intact.
+    if submission and git(repo, 'branch', '--show-current') != branch:
+        branch += '-' + context['task_id']
+    exists = git(repo, 'branch', '--list', branch)
     if exists:
-        git(repo, 'switch', binding['branch'])
+        git(repo, 'switch', branch)
     else:
         remote = git(repo, 'ls-remote', '--heads', 'origin', binding['branch'])
         if remote:
             git(repo, 'fetch', 'origin', binding['branch'])
-            git(repo, 'switch', '-c', binding['branch'], 'FETCH_HEAD')
+            git(repo, 'switch', '-c', branch, submission['commit'] if submission else 'FETCH_HEAD')
         else:
-            git(repo, 'switch', '-c', binding['branch'], 'origin/main')
+            git(repo, 'switch', '-c', branch, 'origin/main')
     if context['issue']['status'] != 'in_progress':
         cli('issue', 'status', binding['issue_id'], 'in_progress')
     return {'instruction': 'Implement the request or recorded corrections on this branch. Commit, then choose submit.'}
@@ -63,7 +68,7 @@ def submit(args, context):
     binding = context['binding']
     repo = repo_root()
     check_repo(repo, binding)
-    if git(repo, 'branch', '--show-current') != binding['branch']:
+    if git(repo, 'branch', '--show-current') not in (binding['branch'], binding['branch'] + '-' + context['task_id']):
         raise ValueError('Prepare and implement on the bound feature branch first.')
     clean(repo)
     commit = git(repo, 'rev-parse', 'HEAD')
@@ -99,7 +104,8 @@ def integration(args, context):
     repo = repo_root()
     check_repo(repo, binding)
     clean(repo)
-    if git(repo, 'branch', '--show-current') == binding['branch'] and git(repo, 'rev-parse', 'HEAD') != commit:
+    branch = git(repo, 'branch', '--show-current')
+    if (branch == binding['branch'] or branch.startswith(binding['branch'] + '-')) and git(repo, 'rev-parse', 'HEAD') != commit:
         raise ValueError('The feature branch changed after approval. Submit it for fresh review.')
     # One host lock covers separate task-local Git databases; remote push also rejects races.
     remote_path = binding['repository'].replace('git@github.com:', 'https://github.com/').split('://')[-1].removesuffix('.git')

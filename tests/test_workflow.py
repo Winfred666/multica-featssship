@@ -103,8 +103,8 @@ class WorkflowFixture(unittest.TestCase):
         output = self.invoke(self.developer, 'resume', task=task)
         return task, output
 
-    def submit(self, text):
-        task, _ = self.resume()
+    def submit(self, text, task=None):
+        task = task or self.resume()[0]
         self.invoke(self.developer, 'prepare', task=task)
         (self.repo / 'message.txt').write_text(text + '\n')
         commit = self.commit(text)
@@ -214,6 +214,41 @@ class WorkflowFixture(unittest.TestCase):
         rejected = self.invoke(self.developer, 'integrate', task=task, ok=False)
         self.assertIn('error', rejected)
         self.assertIn('changed after approval', rejected['error']['message'])
+
+    def test_linked_worktree_correction_preserves_previous_checkout(self):
+        self.install()
+        self.dispatch()
+        first_commit = self.submit('almost')
+        rework = self.review('rework')
+        previous = self.repo
+        (previous / 'message.txt').write_text('unfinished local edit\n')
+        previous_status = self.call('git', 'status', '--porcelain').stdout
+        correction = self.base / 'correction'
+        self.call('git', 'worktree', 'add', '--detach', str(correction), 'origin/main')
+        self.repo = correction
+        task = str(uuid.uuid4())
+        trigger = rework['data']['review_id']
+        self.invoke(self.developer, '--thread', trigger, task=task, trigger=trigger, entry=True)
+        self.developer = correction / '.agents/skills/multica-featssship-developer'
+        resumed = self.invoke(self.developer, 'resume', task=task, trigger=trigger)
+        self.assertEqual(resumed['status'], 'implement')
+        self.invoke(self.developer, 'prepare', task=task, trigger=trigger)
+        self.assertEqual(self.call('git', 'rev-parse', 'HEAD').stdout.strip(), first_commit)
+        self.assertEqual((correction / 'message.txt').read_text(), 'almost\n')
+        second_commit = self.submit('shipped', task=task)
+        self.assertEqual(self.call('git', 'rev-parse', second_commit + '^').stdout.strip(), first_commit)
+        approved = self.review('approve')
+        task, resumed = self.resume()
+        self.assertEqual(resumed['status'], 'integrate')
+        integrated = self.invoke(self.developer, 'integrate', task=task, trigger=approved['data']['review_id'])
+        self.assertEqual(integrated['status'], 'finished')
+        self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'shipped\n')
+        self.assertEqual(self.call('git', 'rev-parse', 'HEAD', cwd=previous).stdout.strip(), first_commit)
+        self.assertEqual(self.call('git', 'branch', '--show-current', cwd=previous).stdout.strip(), self.binding['branch'])
+        self.assertEqual((previous / 'message.txt').read_text(), 'unfinished local edit\n')
+        self.assertEqual(self.call('git', 'status', '--porcelain', cwd=previous).stdout, previous_status)
+        results = [row for row in self.db()['comments'] if row['issue_id'] == self.ids['root'] and unpack(row['content'], 'result')]
+        self.assertEqual(len(results), 1)
 
     def test_install_rejects_self_review(self):
         config = json.loads(self.config_path.read_text())

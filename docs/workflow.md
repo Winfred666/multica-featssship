@@ -51,6 +51,10 @@ own state and reconstructs progress from the feature thread. Installation IDs an
 feature bindings are configuration. Submission, review and integration records
 are native comment JSON blocks; they never go in issue metadata.
 
+A correction in another checkout uses a local branch suffixed with its native
+task ID, starting at the submitted revision. It pushes to the configured feature
+branch while preserving the earlier checkout's local branch and working files.
+
 The dedicated feature thread is read with `--thread ... --tail 30`. Reviewer
 verdicts must come from the configured Reviewer identity and reference the latest
 submission comment and exact commit. A compiled package for an earlier commit is
