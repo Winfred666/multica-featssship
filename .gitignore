@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+.state/
+config.local.*
+.env
+*.egg-info/
+build/
+dist/
+workdirs/
+generated/
+logs/
+.multica/
