@@ -1,0 +1,171 @@
+"""Developer implements, requests independent review, and integrates approval."""
+import fcntl
+from pathlib import Path
+import tempfile
+
+from common import (block, check_repo, clean, cli, comment, current, entry_command,
+                    exclude_local, feature, git, has_manual, human_accepts, latest,
+                    mention, reply_parent, repo_root, test)
+from packages import compile_review
+from sop import Option, Parameter, State, Workflow
+
+
+def observed(context):
+    issue, binding = feature(context)
+    if context['args'].thread:
+        context['state']['reply_parent'] = context['args'].thread
+    context.update(issue=issue, binding=binding, observed=current(binding))
+    return binding
+
+
+def view(context):
+    submission, _, review, _, _, _ = context['observed']
+    return {'data': {'binding': context['binding'], 'submission': submission, 'review': review}}
+
+
+def resume(args, context):
+    submission, _, review, _, rows, _ = context['observed']
+    result, _ = latest(rows, 'result')
+    integrated, _ = latest(rows, 'integration')
+    if result:
+        if context['issue']['status'] != 'in_review':
+            cli('issue', 'status', context['binding']['issue_id'], 'in_review')
+        return {'phase': 'finished', 'data': result}
+    if integrated:
+        return {'phase': 'integrate'}
+    return {'phase': 'implement' if not submission or review and review['verdict'] == 'rework' else
+            'integrate' if review and review['verdict'] == 'approved' else 'await_review'}
+
+
+def prepare(args, context):
+    binding = context['binding']
+    repo = repo_root()
+    check_repo(repo, binding)
+    exclude_local(repo)
+    clean(repo)
+    git(repo, 'fetch', 'origin', 'main')
+    exists = git(repo, 'branch', '--list', binding['branch'])
+    if exists:
+        git(repo, 'switch', binding['branch'])
+    else:
+        remote = git(repo, 'ls-remote', '--heads', 'origin', binding['branch'])
+        if remote:
+            git(repo, 'fetch', 'origin', binding['branch'])
+            git(repo, 'switch', '-c', binding['branch'], 'FETCH_HEAD')
+        else:
+            git(repo, 'switch', '-c', binding['branch'], 'origin/main')
+    if context['issue']['status'] != 'in_progress':
+        cli('issue', 'status', binding['issue_id'], 'in_progress')
+    return {'instruction': 'Implement the request or recorded corrections on this branch. Commit, then choose submit.'}
+
+
+def submit(args, context):
+    binding = context['binding']
+    repo = repo_root()
+    check_repo(repo, binding)
+    if git(repo, 'branch', '--show-current') != binding['branch']:
+        raise ValueError('Prepare and implement on the bound feature branch first.')
+    clean(repo)
+    commit = git(repo, 'rev-parse', 'HEAD')
+    evidence = test(repo, binding['test_command'])
+    git(repo, 'push', 'origin', 'HEAD:refs/heads/' + binding['branch'])
+    name, _ = compile_review(binding, commit)
+    _, _, _, review_row, _, _ = context['observed']
+    data = {'commit': commit, 'summary': args.summary, 'answer': args.answer, 'test': evidence}
+    row = comment(binding['issue_id'], block('submission', data) + '\n\n' + mention(binding['reviewer_id']) +
+                  ' independently inspect this submission. ' + entry_command(name),
+                  reply_parent(context, review_row['id'] if review_row else binding['thread_id']))
+    return {'data': {'submission_id': row['id'], **data},
+            'instruction': 'Review requested. End this turn; resume on the native Reviewer reply.'}
+
+
+def poll(args, context):
+    _, _, review, _, _, _ = context['observed']
+    if not review:
+        return {'accepted': False, 'instruction': 'Reviewer has not returned a verdict. End this turn and await the native reply.'}
+    return {'phase': 'implement' if review['verdict'] == 'rework' else 'integrate'}
+
+
+def integration(args, context):
+    binding = context['binding']
+    submission, submit_row, review, review_row, rows, comments = context['observed']
+    if not submission or not review or review['verdict'] != 'approved':
+        raise ValueError('Integration requires the configured Reviewer’s approval of the latest submission.')
+    commit = submission['commit']
+    if review['commit'] != commit:
+        raise ValueError('The approval does not name the submitted commit.')
+    if has_manual(context['issue']) and not human_accepts(comments, commit):
+        return {'accepted': False, 'instruction': 'Manual hold: a human must reply in this thread with\n' + block('accept', {'commit': commit})}
+    repo = repo_root()
+    check_repo(repo, binding)
+    clean(repo)
+    if git(repo, 'branch', '--show-current') == binding['branch'] and git(repo, 'rev-parse', 'HEAD') != commit:
+        raise ValueError('The feature branch changed after approval. Submit it for fresh review.')
+    # One host lock covers separate task-local Git databases; remote push also rejects races.
+    remote_path = binding['repository'].replace('git@github.com:', 'https://github.com/').split('://')[-1].removesuffix('.git')
+    lock = Path.home() / '.local' / 'state' / 'multica-featssship' / remote_path / 'integration.lock'
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with lock.open('w') as stream:
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {'accepted': False, 'instruction': 'Another feature owns integration. Resume this callback after it finishes.'}
+        git(repo, 'fetch', 'origin', '+refs/heads/main:refs/remotes/origin/main', binding['branch'])
+        head = git(repo, 'ls-remote', 'origin', 'refs/heads/' + binding['branch']).split()[0]
+        if head != commit:
+            raise ValueError('The feature branch changed after approval. Submit it for fresh review.')
+        existing, _ = latest(rows, 'integration')
+        if existing:
+            integrated = existing
+            git(repo, 'merge-base', '--is-ancestor', integrated['revision'], 'origin/main')
+        else:
+            parent = repo / '.multica' / 'featssship' / 'integration'
+            parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(dir=parent) as temporary:
+                checkout = Path(temporary) / 'checkout'
+                git(repo, 'worktree', 'add', '--detach', str(checkout), 'origin/main')
+                try:
+                    try:
+                        git(checkout, 'merge', '--no-edit', commit)
+                        evidence = test(checkout, binding['test_command'])
+                    except ValueError as error:
+                        # The disposable checkout is removed; the feature branch stays intact.
+                        data = {'commit': commit, 'submission_id': submit_row['id'], 'finding': str(error)}
+                        comment(binding['issue_id'], block('integration-rework', data) + '\n\n' + mention(binding['developer_id']) +
+                                ' correct this integration failure and submit for fresh independent review.', reply_parent(context, review_row['id']))
+                        return {'phase': 'implement', 'instruction': 'Integration failed. Correct the feature against current main and submit for fresh review.', 'data': data}
+                    revision = git(checkout, 'rev-parse', 'HEAD')
+                    git(checkout, 'push', 'origin', 'HEAD:refs/heads/main')
+                    integrated = {'revision': revision, 'commit': commit, 'review_id': review_row['id'], 'verdict': 'approved',
+                                  'answer': review['answer'], 'test': evidence}
+                    comment(binding['issue_id'], block('integration', integrated), reply_parent(context, review_row['id']))
+                finally:
+                    git(repo, 'worktree', 'remove', '--force', str(checkout))
+        # A receipt in MAIN makes a retry after an uncertain write observable.
+        main_rows = cli('issue', 'comment', 'list', binding['root_issue_id'], '--thread', binding['main_thread_id'], '--tail', '30')
+        from common import unpack
+        receipt = next((row for row in main_rows if row.get('author_id') == binding['developer_id'] and
+                        (unpack(row.get('content', ''), 'result') or {}).get('issue_id') == binding['issue_id']), None)
+        if not receipt:
+            receipt = comment(binding['root_issue_id'], block('result', {'issue_id': binding['issue_id'], **integrated}) + '\n\n' +
+                              '[Feature](mention://issue/' + binding['issue_id'] + ') integrated after Reviewer approval. ' +
+                              mention(binding['main_id']) + ' receive this verified feature result.', binding['main_thread_id'])
+        comment(binding['issue_id'], block('result', {'main_comment_id': receipt['id'], **integrated}), reply_parent(context, review_row['id']))
+        cli('issue', 'status', binding['issue_id'], 'in_review')
+    return {'data': integrated}
+
+
+workflow = Workflow(
+    State('resume', 'Read this issue’s native submission and verdict; resume this task’s procedure.', initial=True,
+          precheck=observed, view=view, options=(Option('resume', 'implement', 'Resume from native evidence.', resume),)),
+    State('implement', 'Implement the request or Reviewer corrections, then submit a committed revision.', precheck=observed, view=view, options=(
+        Option('prepare', 'implement', 'Prepare the feature branch in this repository.', prepare),
+        Option('submit', 'await_review', 'Test, push and mention the independent Reviewer.', submit, params=(
+            Parameter('--summary', 'What changed and why'), Parameter('--answer', 'Answer to the acceptance question'),)),)),
+    State('await_review', 'Await the native Reviewer reply; end this turn if there is no verdict.', precheck=observed, view=view, options=(
+        Option('check', 'integrate', 'Read the current verdict.', poll),)),
+    State('integrate', 'Integrate the independently approved submission and send MAIN one verified result.', precheck=observed, view=view, options=(
+        Option('integrate', 'finished', 'Respect manual holds, merge, test, push and publish the result.', integration),)),
+    State('finished', 'Verified result delivered to MAIN. Human acceptance owns done.', final=True),
+    params=(Parameter('--thread', 'Native triggering comment UUID for this task', required=False),),
+)

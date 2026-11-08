@@ -1,0 +1,103 @@
+"""Disposable native-CLI fixture; never calls a workspace server."""
+import json
+import os
+from pathlib import Path
+import re
+import sys
+import uuid
+import zipfile
+
+
+def main():
+    path = Path(os.environ['FEATSSSHIP_FAKE_DB'])
+    db = json.loads(path.read_text())
+    args = sys.argv[1:]
+    def option(name, default=None):
+        return args[args.index('--' + name) + 1] if '--' + name in args else default
+    def text(name):
+        if '--' + name + '-stdin' in args:
+            return sys.stdin.read()
+        if option(name + '-file'):
+            return Path(option(name + '-file')).read_text()
+        return option(name, '')
+    def new():
+        return str(uuid.uuid4())
+    db['calls'].append(args)
+    if args[:2] == ['agent', 'get']:
+        result = db['agents'][args[2]]
+    elif args[:2] == ['agent', 'create']:
+        result = {'id': new(), 'name': option('name'), 'runtime_id': option('runtime-id'),
+                  'workspace_id': db['workspace_id'], 'instructions': option('instructions')}
+        db['agents'][result['id']] = result
+    elif args[:3] == ['agent', 'skills', 'list']:
+        result = [{'id': key} for key in db['bindings'].get(args[3], [])]
+    elif args[:3] == ['agent', 'skills', 'add']:
+        bound = db['bindings'].setdefault(args[3], [])
+        if option('skill-ids') not in bound:
+            bound.append(option('skill-ids'))
+        result = {'ok': True}
+    elif args[:2] == ['skill', 'import']:
+        with zipfile.ZipFile(option('file')) as archive:
+            files = {name: archive.read(name).decode() for name in archive.namelist()}
+        name = re.search(r'^name: (.+)$', files['SKILL.md'], re.M)[1]
+        existing = next((s for s in db['skills'].values() if s['name'] == name), None)
+        if existing and option('on-conflict') != 'overwrite':
+            raise ValueError('Skill name already exists')
+        skill = {'id': existing['id'] if existing else new(), 'name': name, 'files': files}
+        db['skills'][skill['id']] = skill
+        result = {'status': 'updated' if existing else 'created', 'skill': {'id': skill['id']}}
+    elif args[:2] == ['project', 'get']:
+        result = db['projects'][args[2]]
+    elif args[:2] == ['project', 'update']:
+        result = db['projects'][args[2]]
+        result['description'] = option('description')
+    elif args[:2] == ['issue', 'get']:
+        result = db['issues'][args[2]]
+    elif args[:2] == ['issue', 'create']:
+        result = {'id': new(), 'title': option('title'), 'description': text('description'),
+                  'project_id': option('project'), 'workspace_id': db['workspace_id'],
+                  'parent_issue_id': option('parent'), 'assignee_id': option('assignee-id'),
+                  'assignee_type': 'agent', 'labels': [], 'status': option('status')}
+        db['issues'][result['id']] = result
+    elif args[:2] == ['issue', 'update']:
+        result = db['issues'][args[2]]
+        if option('title'):
+            result['title'] = option('title')
+        if '--description-stdin' in args:
+            result['description'] = text('description')
+    elif args[:2] == ['issue', 'status']:
+        result = db['issues'][args[2]]
+        result.update(status=args[3], status_category=args[3])
+    elif args[:3] == ['issue', 'comment', 'add']:
+        parent = option('parent')
+        if os.environ.get('FEATSSSHIP_TRIGGER') and args[3] == os.environ['MULTICA_ISSUE_ID']:
+            if parent != os.environ['FEATSSSHIP_TRIGGER']:
+                raise ValueError('Native comment must reply under the triggering comment')
+        result = {'id': new(), 'issue_id': args[3], 'parent_id': parent, 'content': text('content'),
+                  'author_type': 'agent', 'author_id': os.environ.get('MULTICA_AGENT_ID'),
+                  'source_task_id': os.environ.get('MULTICA_TASK_ID')}
+        db['comments'].append(result)
+    elif args[:3] == ['issue', 'comment', 'list']:
+        rows = [row for row in db['comments'] if row['issue_id'] == args[3]]
+        index = {row['id']: row for row in rows}
+        def root(row):
+            while row.get('parent_id'):
+                row = index[row['parent_id']]
+            return row['id']
+        if option('thread'):
+            target = root(index[option('thread')])
+            rows = [row for row in rows if root(row) == target]
+            rows = rows[:1] + rows[1:][-int(option('tail', '30')):]
+        result = rows
+    else:
+        raise ValueError('Unsupported CLI call: ' + str(args))
+    path.write_text(json.dumps(db))
+    print(json.dumps(result))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as error:
+        print(str(error), file=sys.stderr)
+        sys.exit(1)
