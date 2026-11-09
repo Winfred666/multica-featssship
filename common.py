@@ -64,8 +64,10 @@ def reply_parent(context, fallback):
 def check_identity(context, binding, role):
     if context['workspace_id'] != binding['workspace_id'] or context['issue_id'] != binding['issue_id']:
         raise ValueError('Use this package in its native workspace and issue.')
-    if context['agent_id'] != binding[role + '_id']:
-        raise ValueError('This action belongs to the configured ' + role + ' identity.')
+    if role and context['agent_id'] != binding[role + '_id']:
+        # An unauthorized caller must not replace the shared phase's saved output.
+        context['state'] = {}
+        raise context['error']('wrong_agent', 'This phase belongs to the configured ' + role + ' identity.')
     if binding['developer_id'] == binding['reviewer_id']:
         raise ValueError('Developer and Reviewer must be different identities.')
 

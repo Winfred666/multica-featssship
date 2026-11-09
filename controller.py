@@ -2,9 +2,8 @@
 import json
 from pathlib import Path
 
-from common import QUESTIONS, block, cli, comment, entry_command, unpack, write_json
+from common import QUESTIONS, block, cli, comment, entry_command, unpack
 from github_issue import issue_link, mirror_title
-from packages import compile_review
 from sop import Option, Parameter, State, Workflow
 
 ROOT = Path(__file__).resolve().parent
@@ -21,7 +20,8 @@ EDIT_PARAMS = tuple(Parameter(param.flag, param.prompt, required=False) for para
 def configured(context):
     config = json.loads((ROOT / 'installation.json').read_text())
     if (context['workspace_id'], context['issue_id'], context['agent_id']) != (config['workspace_id'], config['root_issue_id'], config['main_id']):
-        raise ValueError('Delegation belongs to the configured MAIN root and native identity.')
+        context['state'] = {}
+        raise context['error']('wrong_agent', 'Delegation belongs to the configured MAIN root and native identity.')
     context['config'] = config
     if context['args'].thread:
         context['state']['reply_parent'] = context['args'].thread
@@ -41,7 +41,7 @@ def publish_spec(context, spec):
     row = comment(context['issue_id'], block('spec', spec),
                   context['args'].thread or context['state'].get('reply_parent') or context['state'].get('spec_id'))
     context['state']['spec_id'] = row['id']
-    return {'data': {'spec_id': row['id'], 'spec': spec}}
+    return {'instruction': f'Read draft comment {row["id"]}. ' + workflow.states['grilling'].description}
 
 
 def read_spec(context):
@@ -60,9 +60,19 @@ def read_spec(context):
 
 
 def propose(args, context):
+    """```dot
+    digraph propose {
+        rankdir=LR; node [shape=box];
+        propose_source [label="Saved draft?", shape=diamond];
+        propose_read [label="Read draft unchanged"];
+        propose_publish [label="Select direction and publish specification"];
+        propose_source -> propose_read [label="yes"];
+        propose_source -> propose_publish [label="no"];
+    }
+    ```"""
     if context['state'].get('spec_id'):
-        spec, row, _ = read_spec(context)
-        return {'data': {'spec_id': row['id'], 'spec': spec}}
+        _, row, _ = read_spec(context)
+        return {'instruction': f'Read draft comment {row["id"]}. ' + workflow.states['grilling'].description}
     selected = direction(context['config'], args.direction)
     spec = {key: getattr(args, key) for key in ('title', 'request', 'direction', 'scope', 'question')}
     spec['test_command'] = args.test_command or selected['test_command']
@@ -79,6 +89,18 @@ def drafting_options(context):
 
 
 def edit(args, context):
+    """```dot
+    digraph edit {
+        rankdir=LR; node [shape=box];
+        edit_check [label="Require one nonblank field"];
+        edit_read [label="Read current specification"];
+        edit_patch [label="Patch field and validate direction and source link"];
+        edit_publish [label="Publish revised specification"];
+        edit_check -> edit_read;
+        edit_read -> edit_patch;
+        edit_patch -> edit_publish;
+    }
+    ```"""
     patch = {param.flag[2:].replace('-', '_'): getattr(args, param.flag[2:].replace('-', '_'))
              for param in EDIT_PARAMS if getattr(args, param.flag[2:].replace('-', '_')) is not None}
     if len(patch) != 1:
@@ -95,13 +117,28 @@ def edit(args, context):
 
 
 def dispatch(args, context):
+    """```dot
+    digraph dispatch {
+        rankdir=LR; node [shape=box];
+        dispatch_read [label="Read specification and dispatch checkpoint"];
+        dispatch_exists [label="Already started?", shape=diamond];
+        dispatch_reuse [label="Return existing feature"];
+        dispatch_create [label="Create or reuse parked feature and native threads"];
+        dispatch_compile [label="Publish shared feature binding"];
+        dispatch_start [label="Start Developer and save checkpoint"];
+        dispatch_read -> dispatch_exists;
+        dispatch_exists -> dispatch_reuse [label="yes"];
+        dispatch_exists -> dispatch_create [label="no"];
+        dispatch_create -> dispatch_compile;
+        dispatch_compile -> dispatch_start;
+    }
+    ```"""
     config = context['config']
     request, spec_row, rows = read_spec(context)
     direction(config, request['direction'])
-    # Persist the created ID before compiling or waking an agent; a retry reuses it.
-    receipt = ROOT / '.state' / (spec_row['id'] + '-dispatch.json')
-    owned = json.loads(receipt.read_text()) if receipt.exists() else {}
-    if owned.get('request', request) != request:
+    # The issue metadata checkpoint survives agent/task changes.
+    owned = context['state'].setdefault('dispatch', {})
+    if owned.get('spec_id', spec_row['id']) != spec_row['id']:
         raise ValueError('The dispatch checkpoint belongs to a different draft.')
     previous = next((row for row in rows if row.get('author_type') == 'agent' and row.get('author_id') == config['main_id']
                      and (unpack(row.get('content', ''), 'dispatch') or {}).get('spec_id') == spec_row['id']), None)
@@ -109,7 +146,7 @@ def dispatch(args, context):
         owned.update(unpack(previous['content'], 'dispatch'), main_thread_id=previous['id'])
         child = cli('issue', 'get', owned['issue_id'])
         if unpack(child['description'], 'binding') and child['status'] != 'backlog':
-            return {'data': {'issue_id': child['id']}, 'instruction': 'Already dispatched; end this turn.'}
+            return {'instruction': 'Already dispatched; end this turn.'}
     binding = {key: config[key] for key in ('workspace_id', 'project_id', 'root_issue_id', 'main_id', 'developer_id', 'reviewer_id', 'repository')}
     binding.update(request, spec_id=spec_row['id'])
     url = request.get('github_issue')
@@ -118,37 +155,29 @@ def dispatch(args, context):
     if 'issue_id' not in owned:
         child = cli('issue', 'create', '--title', binding['title'], '--description-stdin', '--parent', context['issue_id'],
                     '--project', config['project_id'], '--assignee-id', config['developer_id'], '--status', 'backlog', input=binding['request'])
-        owned = {'issue_id': child['id'], 'request': request}
-        write_json(receipt, owned)
+        owned.update(issue_id=child['id'], spec_id=spec_row['id'])
+        context['save_state']()
     binding.update(issue_id=owned['issue_id'], branch='featssship/' + owned['issue_id'])
     if 'thread_id' not in owned:
         row = comment(binding['issue_id'], 'Feature implementation, review and integration.')
         owned['thread_id'] = row['id']
-        write_json(receipt, owned)
+        context['save_state']()
     binding['thread_id'] = owned['thread_id']
     if 'main_thread_id' not in owned:
         row = comment(context['issue_id'], block('dispatch', {'spec_id': spec_row['id'],
                       'issue_id': binding['issue_id'], 'thread_id': binding['thread_id']}),
                       args.thread or context['state'].get('reply_parent') or spec_row['id'])
         owned['main_thread_id'] = row['id']
-        write_json(receipt, owned)
+        context['save_state']()
     binding['main_thread_id'] = owned['main_thread_id']
-    binding['reviewer_skill_id'] = owned.get('reviewer_skill_id')
-    name, skill_id = compile_review(binding)
-    owned['reviewer_skill_id'] = skill_id
-    write_json(receipt, owned)
-    binding['reviewer_skill_id'] = skill_id
     description = (binding['request'] + '\n\nScope: ' + binding['scope'] + '\n\nAcceptance: ' + binding['question'] +
-                   '\n\n' + '\n'.join('- ' + q for q in binding['questions']) + '\n\n' + entry_command('multica-featssship-developer') +
+                   '\n\n' + '\n'.join('- ' + q for q in binding['questions']) + '\n\n' + entry_command('multica-featssship-feature') +
                    '\n\n' + block('binding', binding))
     cli('issue', 'update', binding['issue_id'], '--description-stdin', '--no-start', input=description)
     child = cli('issue', 'get', binding['issue_id'])
     if child['status'] == 'backlog':
         cli('issue', 'status', binding['issue_id'], 'todo')
-    owned['completed'] = True
-    write_json(receipt, owned)
-    return {'data': {'issue_id': binding['issue_id'], 'reviewer_skill': name},
-            'instruction': 'Dispatched; end this turn.'}
+    return {'instruction': 'Dispatched; end this turn.'}
 
 
 workflow = Workflow(
@@ -170,5 +199,5 @@ workflow = Workflow(
     )),
     State('finished', 'MAIN waits for one verified result from the feature issue.', final=True),
     params=(Parameter('--thread', 'Native MAIN trigger comment UUID', required=False),
-            Parameter('--spec', 'Existing draft comment UUID to reopen in a new task', required=False)),
+            Parameter('--spec', 'Existing draft comment UUID to reopen after completion', required=False)),
 )

@@ -99,10 +99,11 @@ def execute(config, path):
     exclude_local(repo)
     config['branch'] = 'main'
     local = repo / '.multica' / 'featssship' / 'packages'
-    developer_package = build('developer', local / 'multica-featssship-developer')
-    config['developer_skill_id'] = install(developer_package, config.get('developer_skill_id'))
+    feature_package = build('feature', local / 'multica-featssship-feature')
+    config['feature_skill_id'] = install(feature_package, config.get('feature_skill_id'))
     write_json(path, config)
-    bind(developer, config['developer_skill_id'])
+    for identity in (developer, reviewer):
+        bind(identity, config['feature_skill_id'])
     name = 'multica-featssship-' + config['project_id'][:8]
     root_package = build('delegation', local / name, name=name, binding=config)
     config['delegation_skill_id'] = install(root_package, config.get('delegation_skill_id'))
@@ -117,9 +118,15 @@ def execute(config, path):
     title = 'MAIN DEV: ' + re.sub(r'^(?:MAIN DEV:\s*)+', '', root['title'])
     cli('issue', 'update', root['id'], '--title', title, '--description-stdin', '--no-start', input=root_text)
     destination = repo / '.agents' / 'skills'
-    for package in (developer_package, root_package):
-        shutil.copytree(package, destination / package.name, dirs_exist_ok=True,
-                        ignore=shutil.ignore_patterns('.state', '__pycache__', '.errors'))
+    for package in (feature_package, root_package):
+        target = destination / package.name
+        ignored = ['.state', '__pycache__', '.errors']
+        if (target / 'config.json').exists():
+            ignored.append('config.json')
+        shutil.copytree(package, target, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*ignored))
+        (target / 'DEBUG.md').unlink(missing_ok=True)
+        for obsolete in (target / 'roles').glob('*-debug.md'):
+            obsolete.unlink()
     command = shlex.join(['python3', str(destination / name / 'wrapper.py')])
     return {'root_issue_id': root['id'], 'developer_id': developer, 'reviewer_id': reviewer,
             'command': command, 'inputs': 'propose --title TITLE --request REQUEST --direction NAME --scope SCOPE --question QUESTION [--github-issue URL]'}

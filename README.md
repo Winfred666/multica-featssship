@@ -1,12 +1,15 @@
 # multica-featssship
 
-A standalone Developer–Reviewer shipping SOP. Start with the [shipping graph](docs/workflow.md)
-and [MAIN's delegation graph](DEBUG.md); callback details live in each role's graphs.
+A standalone Developer–Reviewer shipping SOP. Start with the [shipping graph](docs/workflow.md).
+Each controller declares its state graph and documents local callback logic.
 
 ## One-time installation
 
 Requires Python 3.11+, Git and authenticated `multica`; linked GitHub requests also
 require authenticated `gh` access to read, comment on and close the source issue.
+HTML preview compilation reuses Graphviz's `dot` on PATH or automatically installs
+`graphviz` with the host package manager. Installation failures report
+`dependency_install_failed`; resolve the reported error before retrying.
 Run the installer from the target repository checkout:
 
 ```bash
@@ -41,65 +44,51 @@ For unattended installation:
 To create a role, replace its `_id` with an object such as
 `"developer": {"name": "Developer", "runtime_id": "<runtime UUID>", "model": "<chosen model>"}`.
 The existing root's assignee is MAIN. Installation preserves its ID, history,
-labels and status, prefixes its title with `MAIN DEV:`, publishes direction
-scopes/questions/tests in the project description and adds the owned skills to
-agents.
+labels and status, prefixes its title with `MAIN DEV:`, and publishes selected
+scopes/questions/tests in the project description. It binds delegation to MAIN
+and the same `multica-featssship-feature` skill to Developer and Reviewer.
 
-| Local resource | Location |
-| --- | --- |
-| Installed skills | `.agents/skills/multica-featssship*` |
-| Generated packages and integration checkouts | `.multica/featssship` |
-| Answers and credentials | Outside the repository |
+## Use
 
-The installer adds local Git exclusions for generated resources. Retain its
-answers file and reserved package names; reconcile native state before retrying
-an uncertain external write.
+MAIN runs the installed delegation skill's `entry.py` from the target repository.
+Draft with `propose --title TITLE --request REQUEST --direction NAME --scope SCOPE
+--question QUESTION`. Resolve one unclear point per human question and `edit`,
+then `dispatch`. An optional `--github-issue URL` mirrors an existing source issue;
+it does not replace the delegated acceptance criteria.
 
-## Delegation
+The feature issue has one shipping workflow: `implement → review → integrate →
+finished`, with rework returning to `implement`. Developer and Reviewer call the
+same skill in the same issue checkout. Phase prechecks reject the wrong native
+agent ID. Questions and evidence stay on the issue; no per-review skill is built.
+MAIN only dispatches and receives. Human acceptance owns done.
 
-Start MAIN's installed entry command and follow the `drafting` state's guidance.
-Its proposal input is:
+This uses the accepted issue-state protocol from
+[RSI 0fd1fbb4a](https://github.com/Winfred666/multica-RSI/commit/0fd1fbb4a).
+Shared issue folders still await the separate R-269 deployment, which serializes
+agents within an issue and isolates different issues. The runtime stores one
+current record under `issue.metadata["sop.multica-featssship-feature"]`; completion
+removes only that key. No task ID, local status file, review checkout or folder
+mapping is needed. Static installation answers and package settings remain local.
+Existing task-local sessions are preserved, not automatically migrated: finish
+them with their installed version before binding the shared package.
 
-```text
-propose --title "Editor: save documents" --request "Save and reopen edits." --direction editor --scope "src/editor" --question "Can edits be saved and reopened?"
-```
+Use `--thread <trigger UUID>` on comment-triggered calls. `--help` reads current
+guidance without running an action. Output contains status, instructions, callback
+commands, errors and needed recovery facts; binding data and findings are not echoed every time.
+An approval applies to one exact submitted revision. Integration tests the merged
+revision in a disposable checkout, preserves the issue checkout on failure, and
+reports one verified result to MAIN. Linked GitHub requests close only after a
+successful push, with Developer's resolution and integrated commit.
 
-To reopen a draft in a new native task, pass `--spec <draft UUID>` and choose
-`propose`. On a comment trigger, also pass `--thread <reply UUID>`.
+## Development
 
-| Optional proposal input | Meaning |
-| --- | --- |
-| `--test-command TEXT` | Verification command; defaults to the configured direction |
-| `--github-issue URL` | Existing source link; a linked title also works |
-| `--thread UUID` | Native trigger comment to reply under |
-
-See the [specification and delegation graph](DEBUG.md).
-
-## Acceptance and delivery reference
-
-A human releases a `manual` hold by replying in the feature thread with the
-approved full commit SHA:
-
-````text
-<!-- featssship:accept -->
-```json
-{"commit": "<approved full commit SHA>"}
-```
-````
-
-Developer supplies `submit --summary "<outcome; approach; necessary links or artifacts>"`;
-`--answer` is optional. The script reports added/deleted text lines, touched-file
-and binary counts, and the three largest file diffs (ties by path; binary lines
-are `null`). It compares the submitted commit to its merge base with fetched main.
-
-## Development checks
-
-```bash
-python3 -m unittest discover -s tests -v
-python3 wrapper.py --validate
-```
-
-Tests also validate generated role wrappers. Set `FEATSSSHIP_EVIDENCE` to an
-external JSON path to retain disposable-fixture evidence. See
-[AGENTS.md](AGENTS.md) for development constraints and
-[Symbolic-SoP authoring](docs/symbolic-sop-authoring.md) for the bundled runtime.
+Run `python3 -m unittest discover -s tests -v`. The fixture uses real Git with a
+local CLI stand-in and exercises shared state, both identities, correction,
+independent approval, manual holds, integration and delivery retries across two
+installed package directories sharing the same issue state.
+Run `python3 tests/check_symbolic_sop.py <package-directory>` for the canonical
+nine protocol checks; its only packaging change is the bundled template path.
+Build standalone packages with `packages.build('delegation', ..., binding=config)`
+and `packages.build('feature', ...)`; both validate with `wrapper.py --validate`.
+See [the short authoring guide](docs/symbolic-sop-authoring.md). Runtime and preview
+details are in [the creator debugging reference](docs/DEBUG.md).

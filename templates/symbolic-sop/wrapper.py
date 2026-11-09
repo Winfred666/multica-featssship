@@ -2,8 +2,6 @@
 """Reusable SOP runtime. Customize controller.py; run this file for JSON guidance."""
 
 import argparse
-from datetime import datetime, timezone
-import hashlib
 from html import escape
 import importlib.util
 import json
@@ -11,21 +9,19 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
-import tempfile
-import traceback
 import uuid
 from types import SimpleNamespace
 from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parent
-ERROR_REPO = ""
 RULES = {
-    "identity": "MULTICA_TASK_ID is required; state is keyed by that exact value.",
-    "state": "Each task owns .state/<task_id>.json; read it directly and replace atomically.",
-    "transitions": "Controller phases advance on callbacks; wrapper assertions can enter error or blocked; completion deletes the task record for reuse in the same native task.",
+    "identity": "MULTICA_ISSUE_ID and MULTICA_WORKSPACE_ID identify the shared issue state.",
+    "state": "Each SOP owns one issue metadata key, sop.<skill-name>, containing serialized JSON.",
+    "transitions": "Controller phases advance on callbacks; wrapper assertions can enter error or blocked; completion deletes only this SOP's metadata key.",
     "callbacks": "Choose a named option valid in the recorded state; init starts or resumes without an action.",
     "failure": "Assertion failures enter error; one repaired retry may recover or enter blocked. Reconcile external writes first.",
     "repair": "Add a reproducing regression fixture, repair minimally, retry once; stop if still failing.",
@@ -42,6 +38,41 @@ class SOPError(Exception):
     def __init__(self, code, message, hint=None):
         super().__init__(message)
         self.code, self.hint = code, hint
+
+
+def ensure_command(name, package):
+    executable = shutil.which(name)
+    if executable:
+        return executable
+    hint = f'Resolve the installation error for {package}, then retry this SOP call.'
+    installers = (
+        ('apt-get', ['install', '-y', '--no-install-recommends']),
+        ('dnf', ['install', '-y']), ('yum', ['install', '-y']),
+        ('apk', ['add']), ('pacman', ['-S', '--noconfirm']),
+        ('brew', ['install']),
+        ('winget', ['install', '--exact', '--silent',
+                    '--accept-package-agreements', '--accept-source-agreements', '--id']),
+    )
+    for manager, arguments in installers:
+        installer = shutil.which(manager)
+        if not installer:
+            continue
+        target = {'graphviz': 'Graphviz.Graphviz'}.get(package, package) if manager == 'winget' else package
+        command = [installer, *arguments, target]
+        if manager not in ('brew', 'winget') and os.geteuid() != 0:
+            command = ['sudo', '-n', *command]
+        try:
+            result = subprocess.run(command, text=True, capture_output=True, timeout=300)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise SOPError('dependency_install_failed', f'Could not install {package}: {error}', hint) from error
+        if result.returncode:
+            raise SOPError('dependency_install_failed',
+                           f'Could not install {package}: {result.stderr.strip() or result.stdout.strip()}', hint)
+        executable = shutil.which(name)
+        if not executable:
+            raise SOPError('dependency_install_failed', f'Installed {package}, but {name} is unavailable on PATH.', hint)
+        return executable
+    raise SOPError('dependency_install_failed', f'Cannot install {package}: no supported package manager on PATH.', hint)
 
 
 class Parser(argparse.ArgumentParser):
@@ -70,7 +101,7 @@ def callback(instruction, args=None):
 
 
 def validate_package():
-    required = ('SKILL.md', 'DEBUG.md', 'config.json', 'wrapper.py', 'controller.py', 'sop.py', 'monitor.py')
+    required = ('SKILL.md', 'config.json', 'wrapper.py', 'controller.py', 'sop.py', 'monitor.py')
     for name in required:
         path = ROOT / name
         if not path.is_file() or not path.read_text().strip():
@@ -113,40 +144,60 @@ def multica(*args):
     return json.loads(result.stdout)
 
 
-def atomic_write(path, content):
-    fd, temporary = tempfile.mkstemp(prefix="." + path.name + ".", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as output:
-            output.write(content)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+def state_key(context):
+    key = 'sop.' + context['skill']
+    if len(key) > 64:
+        raise SOPError('invalid_state_key', 'Issue-bound SOP names must be at most 60 characters')
+    return key
 
 
-def state_path(context):
-    return ROOT / '.state' / (context['task_id'] + '.json')
-
-
-def read_state(context, phases):
-    path = state_path(context)
-    if not path.exists():
+def read_state(context, phases=None):
+    issue = multica('get', context['issue_id'])
+    value = issue['metadata'].get(state_key(context))
+    if value is None:
         return {}
     try:
-        state = json.loads(path.read_text(encoding='utf-8'))
-    except json.JSONDecodeError as error:
-        raise SOPError('invalid_state', 'Invalid task state JSON: ' + str(error)) from error
-    if not isinstance(state, dict) or state.get('status') not in phases:
-        raise SOPError('invalid_state', 'Task state must contain a declared status')
+        state = json.loads(value)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise SOPError('invalid_state', 'Invalid SOP metadata JSON: ' + str(error)) from error
+    if (not isinstance(state, dict) or not isinstance(state.get('status'), str) or
+            phases is not None and state['status'] not in phases):
+        raise SOPError('invalid_state', 'SOP metadata must contain a declared status')
+    # Replayed choices use the receiving checkout after an issue handoff.
+    for choice in state.get('output', {}).get('next_step', []):
+        if choice.get('command'):
+            words = shlex.split(choice['command'])
+            if words[:2] == state.get('runtime'):
+                choice['command'] = shlex.join([sys.executable, str(ROOT / 'wrapper.py'), *words[2:]])
     return state
 
 
 def save_state(context, state):
-    path = state_path(context)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, json.dumps(state, default=str, allow_nan=False))
+    state['runtime'] = [sys.executable, str(ROOT / 'wrapper.py')]
+    try:
+        multica('metadata', 'set', context['issue_id'], '--key', state_key(context),
+                '--type', 'string', '--value', json.dumps(state, default=str, allow_nan=False, separators=(',', ':')))
+    except Exception as error:
+        context['state_write_failed'] = True
+        raise SOPError('state_write_failed', str(error),
+                       'Inspect the saved SOP metadata and reconcile action effects before retrying; do not repeat a completed action.') from error
+
+
+def delete_state(context):
+    try:
+        multica('metadata', 'delete', context['issue_id'], '--key', state_key(context))
+    except Exception as error:
+        context['state_write_failed'] = True
+        raise SOPError('state_write_failed', str(error),
+                       'Inspect the saved SOP metadata and reconcile action effects before retrying; do not repeat a completed action.') from error
+    context['state_deleted'] = True
+
+
+def help_output(context):
+    state = read_state(context)
+    if state:
+        return json.dumps(redact(agent_decision(state.get('output', state))), allow_nan=False)
+    return (ROOT / 'SKILL.md').read_text(encoding='utf-8').split('---', 2)[2].strip()
 
 
 def assertion_before(workflow, context):
@@ -184,7 +235,7 @@ def recovery_result(receipt, status, context):
                              repair_args)
     return {'ok': False, 'accepted': False, 'finished': False, 'blocked': blocked,
             'status': status, 'state_changed': False, 'error': detail, 'next_step': next_step,
-            'evidence': str(state_path(context)),
+            'evidence': {'issue_id': context['issue_id'], 'key': state_key(context)},
             'external_write_attempted': receipt.get('external_write_attempted', False),
             'data': receipt.get('assertion', {}).get('result', {}).get('data')}
 
@@ -213,8 +264,8 @@ def transition(args, context, controller):
     receipt = None
     if phase in {'error', 'blocked'}:
         receipt = state['recovery']
-        if any(receipt[key] != context[key] for key in ('task_id', 'workspace_id', 'issue_id')):
-            raise SOPError('wrong_recovery', 'Assertion receipt belongs to another issue or workspace')
+        if receipt['issue_id'] != context['issue_id']:
+            raise SOPError('wrong_recovery', 'Assertion receipt belongs to another issue')
         if phase == 'blocked' or args.event == 'init':
             return recovery_result(receipt, before, context)
         if args.event != 'repaired':
@@ -222,16 +273,6 @@ def transition(args, context, controller):
         context['argv'] = receipt['argv']
         phase = receipt['phase']
         args = arguments(receipt['argv'], controller)
-    if args.error is not None or args.error_file is not None:
-        message = args.error if args.error is not None else args.error_file.read_text(encoding='utf-8')
-        context['reported_error'] = message
-        hint = next((hint for pattern, hint in PATTERNS if re.search(pattern, message)), None)
-        raise SOPError('action_error', message or 'Agent reported an empty error', hint)
-    if args.event == 'quit' and phase == workflow.initial and not args.extra:
-        context['quitted'] = True
-        context['state'] = state
-        message = f'SoP {controller.SOP_NAME} quitted'
-        raise SOPError('quitted', message, message)
 
     def cli(*command, write=False):
         record = {'argv': list(command), 'write': write, 'succeeded': False}
@@ -242,7 +283,7 @@ def transition(args, context, controller):
 
     if not context['issue_id']:
         raise SOPError('missing_issue_id', 'MULTICA_ISSUE_ID is required')
-    context.update(cli=cli, error=SOPError)
+    context.update(cli=cli, error=SOPError, save_state=lambda: save_state(context, state))
     invalid = None
     try:
         if receipt and receipt['assertion']['boundary'] == 'after':
@@ -265,6 +306,16 @@ def transition(args, context, controller):
                 initial = context.get('initial')
                 result = error.result
             else:
+                if args.error is not None or args.error_file is not None:
+                    message = args.error if args.error is not None else args.error_file.read_text(encoding='utf-8')
+                    hint = next((hint for pattern, hint in PATTERNS if re.search(pattern, message)), None)
+                    raise SOPError('action_error', message or 'Agent reported an empty error', hint)
+                if args.event == 'quit' and phase == workflow.initial and not args.extra:
+                    delete_state(context)
+                    context['quitted'] = True
+                    context['state'] = state
+                    message = f'SoP {controller.SOP_NAME} quitted'
+                    raise SOPError('quitted', message, message)
                 try:
                     if before is None and args.event != 'init':
                         raise SOPError('invalid_transition', 'Start this SOP with a bare call or init before choosing an option')
@@ -281,19 +332,19 @@ def transition(args, context, controller):
     except AssertionError as error:
         if 'assertion' not in context:
             raise
-        clean_context = json.loads(json.dumps({k: v for k, v in context.items() if k not in {'cli', 'error', 'args'}}, default=str))
-        failure = exception_result(error, clean_context)
+        failure = exception_result(error, context)
         status = 'blocked' if receipt else 'error'
-        saved = {**clean_context, 'phase': phase, 'args': vars(args),
+        saved = {'issue_id': context['issue_id'], 'phase': phase, 'argv': context['argv'],
+                 'assertion': context['assertion'],
                  'error': failure['error'], 'external_write_attempted': failure['external_write_attempted']}
         state.update(status=status, recovery=saved)
-        save_state(context, state)
         result = recovery_result(saved, status, context)
         result['state_changed'] = True
         return result
     finally:
         context.pop('cli', None)
         context.pop('error', None)
+        context.pop('save_state', None)
     if result['phase'] == workflow.initial:
         result.setdefault('alternatives', []).append({'instruction': 'Stop this SOP.', 'callback': ['quit']})
     next_phase = result.pop('phase')
@@ -311,11 +362,10 @@ def transition(args, context, controller):
                   state_changed=changed, error=invalid)
     json.dumps(result, allow_nan=False)
     if finished:
-        state_path(context).unlink(missing_ok=True)
+        delete_state(context)
     elif changed:
         state.pop('recovery', None)
         state['status'] = status
-        save_state(context, state)
     return result
 
 
@@ -338,50 +388,6 @@ def redact(value):
     return clean(value)
 
 
-def github(*argv, payload=None):
-    result = subprocess.run(["gh", "api", "--hostname", "github.com", *argv],
-                            input=json.dumps(payload) if payload is not None else None,
-                            capture_output=True, text=True, timeout=10,
-                            env={**os.environ, "GH_PROMPT_DISABLED": "1"})
-    if result.returncode:
-        raise RuntimeError(result.stderr.strip() or f"gh exited {result.returncode}")
-    return json.loads(result.stdout)
-
-
-def deliver_pending():
-    destination = os.environ.get("SYMBOLIC_SOP_ERROR_REPO", "").strip()
-    if not destination:
-        return {"status": "local", "reason": "external reporting is not configured"}
-    outbox = ROOT / ".errors"
-    if not outbox.exists():
-        return {"status": "none"}
-    try:
-        pending = sorted(outbox.glob("*.json"))
-        if not pending:
-            return {"status": "none"}
-        path = pending[0]
-        incident = json.loads(path.read_text(encoding="utf-8"))
-        repo = destination
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
-            raise ValueError("Configure SYMBOLIC_SOP_ERROR_REPO as owner/repo")
-        metadata = github("repos/" + repo)
-        if metadata.get("private") is not True or metadata.get("full_name", "").lower() != repo.lower():
-            raise ValueError("Error destination must be the configured private repository")
-        details = json.dumps(redact(incident), indent=2, ensure_ascii=True)
-        chunks = [details[start:start + 18000] for start in range(0, len(details), 18000)]
-        issue = github("--method", "POST", f"repos/{repo}/issues", "--input", "-", payload={
-            "title": f"[symbolic-sop] {incident['code']} ({incident['incident_id']})",
-            "body": "Error report (JSON; continuation in comments if needed):\n\n" + chunks[0],
-        })
-        for chunk in chunks[1:]:
-            github("--method", "POST", f"repos/{repo}/issues/{issue['number']}/comments", "--input", "-",
-                   payload={"body": "Error report continued:\n\n" + chunk})
-        path.unlink()
-        return {"status": "sent", "incident_id": incident["incident_id"], "issue_url": issue["html_url"], "remaining": len(pending) - 1}
-    except Exception as error:
-        return redact({"status": "queued", "error": f"{type(error).__name__}: {error}", "outbox": str(outbox)})
-
-
 def exception_result(error, context):
     assertion_failure = isinstance(error, AssertionError) and bool(context.get('assertion'))
     hint = error.hint if isinstance(error, SOPError) else None
@@ -394,18 +400,7 @@ def exception_result(error, context):
     if hint is None or not isinstance(error, SOPError):
         detail["rules"] = RULES
         detail["workflow_rules"] = context.get("controller_rules", "Read controller.py; preserve the workflow contract.")
-        detail["fixture_request"] = "Preserve the failing argv, relevant Multica IDs, and prior task JSON record; add a failing local fixture before changing the script."
-    detail["incident_id"] = uuid.uuid4().hex
-    incident = {**context, "incident_id": detail["incident_id"], "timestamp": datetime.now(timezone.utc).isoformat(),
-                "repository": os.environ.get("SYMBOLIC_SOP_ERROR_REPO", ERROR_REPO),
-                "code": code, "error": detail, "traceback": traceback.format_exc()}
-    try:
-        incident["script_sha256"] = hashlib.sha256((ROOT / "controller.py").read_bytes()).hexdigest()
-        incident["wrapper_sha256"] = hashlib.sha256((ROOT / "wrapper.py").read_bytes()).hexdigest()
-        incident["cwd"] = str(Path.cwd())
-    except OSError:
-        pass
-    incident = redact(incident)
+        detail["fixture_request"] = "Preserve the failing argv, relevant Multica IDs, and prior SOP metadata; add a failing local fixture before changing the script."
     writes = [command for command in context.get("commands", []) if command["write"]]
     write_attempted = bool(writes) or context.get('external_write_attempted', False)
     retry = context["argv"] if not isinstance(error, SOPError) and not write_attempted else []
@@ -415,24 +410,15 @@ def exception_result(error, context):
     result = {"ok": False, "status": context.get("prior_status"), "accepted": False, "finished": False,
               "state_changed": False, "error": redact(detail),
               "next_step": recovery, "external_write_attempted": write_attempted}
-    if "native_result" in context:
-        result.update(data={key: value for key, value in context['native_result'].items()
-                            if key not in {'ok', 'error', 'instruction'}},
-                      returncode=context["native_returncode"])
-    try:
-        outbox = ROOT / ".errors"
-        outbox.mkdir(mode=0o700, exist_ok=True)
-        path = outbox / (incident["timestamp"].replace(":", "-") + "-" + incident["incident_id"] + ".json")
-        atomic_write(path, json.dumps(incident, indent=2))
-        result["reporting"] = deliver_pending()
-        result["reporting"]["current_incident_queued"] = path.exists()
-    except Exception as reporting_error:
-        result["reporting"] = redact({"status": "failed", "error": str(reporting_error), "incident": incident})
     return result
 
 
+def agent_decision(output):
+    return {key: output[key] for key in ('status', 'instruction', 'next_step', 'error', 'evidence', 'usage') if key in output}
+
+
 def response(result):
-    """Agent guidance; diagnostics remain in the saved incident."""
+    """Agent guidance for the current issue state."""
     step = result['next_step']
     instruction = step['instruction']
     if result['status'] is not None:
@@ -445,22 +431,22 @@ def response(result):
     output = {'status': result['status'], 'instruction': instruction, 'next_step': options}
     if result.get('error'):
         output['error'] = {key: result['error'][key] for key in ('code', 'message')}
-    for key in ('data', 'evidence', 'usage'):
+    for key in ('evidence', 'usage'):
         value = result.get(key)
         if isinstance(value, dict):
             value = {k: v for k, v in value.items() if v not in (None, '', [], {})}
         if value not in (None, '', [], {}):
             output[key] = value
-    return output
+    return agent_decision(output)
 
 
-def upload_artifact(filename, content):
-    """Replace this agent's named live deliverable on the native task issue."""
+def upload_artifact(filename, content, *, issue_id):
+    """Publish the named live deliverable on the native issue."""
     if not all(os.environ.get(key) for key in
-               ('MULTICA_SERVER_URL', 'MULTICA_TOKEN', 'MULTICA_TASK_ID', 'MULTICA_ISSUE_ID', 'MULTICA_WORKSPACE_ID')):
+               ('MULTICA_SERVER_URL', 'MULTICA_TOKEN', 'MULTICA_ISSUE_ID', 'MULTICA_WORKSPACE_ID')):
         return
     boundary = 'sop-' + uuid.uuid4().hex
-    fields = {'task_id': os.environ['MULTICA_TASK_ID'], 'issue_id': os.environ['MULTICA_ISSUE_ID']}
+    fields = {'issue_id': issue_id}
     body = b''.join((f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n').encode()
                     for key, value in fields.items())
     body += (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
@@ -477,6 +463,18 @@ def upload_artifact(filename, content):
         print(redact('Live artifact update failed: ' + str(error)), file=sys.stderr)
 
 
+def graph_svg(source, identifier):
+    dot = ensure_command('dot', 'graphviz')
+    result = subprocess.run([dot, '-Tsvg', '-Gid=' + identifier,
+                             '-Nfontname=Helvetica', '-Nstyle=filled', '-Nmargin=0.2',
+                             '-Nfillcolor=#eef2ff', '-Ncolor=#94a3b8',
+                             '-Efontname=Helvetica', '-Efontsize=12', '-Ecolor=#64748b'], input=source, text=True,
+                            capture_output=True, timeout=30)
+    if result.returncode:
+        raise ValueError('Invalid DOT diagram: ' + result.stderr.strip())
+    return result.stdout[result.stdout.index('<svg'):]
+
+
 def state_artifact(context, controller, result):
     """Render the controller's workflow and highlight the current or failed state."""
     status = result['status']
@@ -487,36 +485,95 @@ def state_artifact(context, controller, result):
         phase = (assertion.get('result', {}).get('phase') or recovery.get('phase') or
                  context.get('phase') or context.get('prior_status') or controller.workflow.initial)
     states = controller.workflow.states
-    diagram = 'flowchart TD\n' + '\n'.join(
-        f'{name}["{name}"]' for name in states)
+    quote = json.dumps
+    diagram = 'digraph workflow {\nrankdir=LR; bgcolor="transparent";\nnode [shape=box];\n'
+    diagram += '\n'.join(f'{quote(name)} [id={quote("state_" + name)}];' for name in states)
+    for branch in controller.workflow.branches.values():
+        diagram += f'\n{quote(branch.name)} [shape=diamond, label={quote(branch.description)}];'
+        diagram += '\n' + '\n'.join(f'{quote(branch.name)} -> {quote(target)} [label={quote(label)}];'
+                                     for label, target in branch.routes.items())
     edges = {(state.name, option.name): option.target for state in states.values()
              if not callable(state.options) for option in state.options}
-    source = context.get('prior_status')
-    if source in states and phase in states and context['argv'] and (
-            result.get('accepted') or assertion.get('boundary') == 'after'):
-        edges[source, context['argv'][0]] = phase
-    diagram += '\n' + '\n'.join(f'{source} -->|{option}| {target}'
-                                for (source, option), target in edges.items())
+    for source, targets in context.get('option_targets', {}).items():
+        edges.update({(source, name): target for name, target in targets.items()})
+    logic = dict(context.get('option_diagrams', {}))
+    for state in states.values():
+        if not callable(state.options):
+            logic[state.name] = {option.name: option.diagram() for option in state.options}
+    logic = {state: {name: graph_svg(source, f'logic_{state}_{name}')
+                     for name, source in charts.items()
+                     if source}
+             for state, charts in logic.items()}
+    diagram += '\n' + '\n'.join(f'{quote(source)} -> {quote(target)} [id="option_{index}", label={quote(option)}];'
+                                for index, ((source, option), target) in enumerate(edges.items()))
+    # Boundary markers are diagram-only; they never introduce workflow options.
+    boundaries = ['__start [shape=point, label="", fillcolor=black, color=black, width=0.05, height=0.05];',
+                  '__end [shape=doublecircle, label="", style=filled, fillcolor=black, color=black, width=0.2, height=0.2, fixedsize=true];',
+                  f'__start -> {quote(controller.workflow.initial)};']
+    boundaries.extend(f'{quote(state.name)} -> __end;' for state in states.values() if state.final)
+    diagram += '\n' + '\n'.join(boundaries)
     if phase in states:
         color = '#fee2e2' if result.get('error') else '#dcfce7'
-        diagram += f'\nclassDef current fill:{color},stroke:#2563eb,stroke-width:3px\nclass {phase} current\n'
-    rows = ''.join('<tr' + (' class="current"' if state.name == phase else '') + '><td>' + escape(state.name)
-                   + '</td><td>' + escape(state.description) + '</td></tr>' for state in controller.workflow.states.values())
-    details = {'issue_id': os.environ['MULTICA_ISSUE_ID'], 'task_id': context['task_id'], 'status': status}
+        diagram += f'\n{quote(phase)} [fillcolor="{color}", color="#2563eb", penwidth=2];\n'
+    diagram += '\n}'
+    details = {'issue_id': context['issue_id'], 'sop': controller.SOP_NAME, 'status': status}
     if result.get('error'):
         details.update(failed_state=phase, boundary=assertion.get('boundary'), error=result['error'])
-    return ('<!doctype html><html lang="en"><meta charset="utf-8"><title>' + escape(controller.SOP_NAME) + '</title>'
-            '<style>body{font:15px system-ui;margin:24px;color:#172033}table{border-collapse:collapse;width:100%}'
-            'td{padding:10px;border:1px solid #cbd5e1}.current{background:#e0ecff}pre{white-space:pre-wrap}</style>'
-            '<h1>' + escape(controller.SOP_NAME) + '</h1><pre>' + escape(json.dumps(redact(details), indent=2)) + '</pre>'
-            '<pre class="mermaid">' + escape(diagram) + '</pre><table>' + rows + '</table>'
-            '<script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";'
-            'mermaid.initialize({startOnLoad:true,securityLevel:"strict"});</script></html>')
+    nodes = {}
+    for state in states.values():
+        # Other states show declared guidance; previews never run views or option factories.
+        options = context.get('resolved_options', {}).get(state.name, () if callable(state.options) else state.options)
+        choices = [callback(option.prompt, option.callback()) for option in options]
+        if state.initial:
+            choices.append(callback('Stop this SOP.', ['quit']))
+        nodes[state.name] = response({'status': state.name,
+                                     'next_step': {**callback(state.description), 'alternatives': choices}})
+    if context.get('output'):
+        nodes[phase] = agent_decision(context['output'])
+    links = {f'option_{index}': {
+        'decision': next((option for option in nodes[source]['next_step']
+                          if shlex.split(option['command'])[2] == name), None),
+        'source': source, 'option': name}
+        for index, (source, name) in enumerate(edges)}
+    templates = ''.join(f'<template id="chart_{state}_{name}"><div class="diagram">{redact(svg)}</div></template>'
+                        for state, charts in logic.items() for name, svg in charts.items())
+    logic = {state: {name: f'chart_{state}_{name}' for name in charts} for state, charts in logic.items()}
+    payload = json.dumps(redact({'nodes': nodes, 'edges': links, 'decision': nodes[phase], 'logic': logic}),
+                         separators=(',', ':')).replace('<', '\\u003c')
+    return ('<!doctype html><html lang="en"><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1"><title>' + escape(controller.SOP_NAME) + '</title>'
+            '<style>body{font:15px system-ui;margin:8px}pre{white-space:pre;overflow-x:auto}'
+            '.diagram{margin:0;max-width:100%;overflow-x:auto}.diagram svg{display:block;max-width:none;margin:auto}'
+            '@media(orientation:landscape){.diagram{overflow-x:hidden}.diagram svg{max-width:100%;height:auto}}'
+            '[role="button"]{cursor:pointer}.edge path{pointer-events:stroke}.edge text{paint-order:stroke;stroke:white;stroke-width:3px}'
+            'h1{font-size:18px}</style>'
+            '<div class="diagram" id="workflow">' + graph_svg(diagram, 'workflow_graph') + '</div>'
+            '<h1>' + escape(controller.SOP_NAME) + '</h1><pre id="detail" aria-live="polite">'
+            + escape(json.dumps(redact(nodes[phase]), indent=2)) + '</pre>'
+            '<div id="logic"></div>'
+            '<pre id="metadata">' + escape(json.dumps(redact(details), indent=2)) + '</pre>'
+            + templates +
+            '<script id="sop-data" type="application/json">' + payload + '</script>'
+            '<script>'
+            'const data=JSON.parse(document.getElementById("sop-data").textContent),detail=document.getElementById("detail"),logic=document.getElementById("logic");'
+            'const show=(value,charts={})=>{detail.textContent=JSON.stringify(value,null,2);logic.replaceChildren();'
+            'for(const [name,id] of Object.entries(charts)){if(!id)continue;'
+            'const heading=document.createElement("h2");'
+            'heading.textContent=name;logic.append(heading,document.getElementById(id).content.cloneNode(true))}};'
+            'const bind=(element,value,charts={})=>{if(!element||!value)return;element.setAttribute("tabindex","0");element.setAttribute("role","button");'
+            'element.onclick=()=>show(value,charts);element.onkeydown=event=>{if(event.key==="Enter"||event.key===" "){'
+            'event.preventDefault();show(value,charts)}}};'
+            'for(const [name,value] of Object.entries(data.nodes)){'
+            'const node=document.getElementById(`state_${name}`);bind(node,value,data.logic[name])}'
+            'for(const [id,edge] of Object.entries(data.edges)){'
+            'bind(document.getElementById(id),edge.decision,{[edge.option]:data.logic[edge.source]?.[edge.option]})}'
+            'show(data.decision,data.logic[data.decision.status]);'
+            '</script></html>')
 
 
 def publish_artifacts(context, controller, result):
     if not controller or not all(os.environ.get(key) for key in
-            ('MULTICA_SERVER_URL', 'MULTICA_TOKEN', 'MULTICA_TASK_ID', 'MULTICA_ISSUE_ID', 'MULTICA_WORKSPACE_ID')):
+            ('MULTICA_SERVER_URL', 'MULTICA_TOKEN', 'MULTICA_ISSUE_ID', 'MULTICA_WORKSPACE_ID')):
         return
     shifted = result.get('state_changed') or result.get('finished')
     if not (shifted or result.get('error') or
@@ -525,10 +582,11 @@ def publish_artifacts(context, controller, result):
     try:
         # In DEBUG mode, update the controller workflow's state chart artifact on every state shift.
         if controller.DEBUG and shifted:
-            upload_artifact(controller.SOP_NAME + '-state.html', state_artifact(context, controller, result))
+            upload_artifact(controller.SOP_NAME + '-state.html', state_artifact(context, controller, result),
+                            issue_id=context['issue_id'])
         if not result.get('error') and hasattr(controller, 'artifacts'):
             for filename, content in controller.artifacts({**context, 'cli': multica, 'error': SOPError}).items():
-                upload_artifact(filename, content)
+                upload_artifact(filename, content, issue_id=context['issue_id'])
     except Exception as error:
         print(redact('Live artifact update failed: ' + str(error)), file=sys.stderr)
 
@@ -544,18 +602,21 @@ def main(argv=None):
         except Exception as error:
             print(json.dumps({'status': 'error', 'error': str(error)}))
             return 1
-    task_id = os.environ.get("MULTICA_TASK_ID")
-    context = {"task_id": task_id, "agent_id": os.environ.get("MULTICA_AGENT_ID"),
+    context = {"agent_id": os.environ.get("MULTICA_AGENT_ID"),
                "issue_id": os.environ.get("MULTICA_ISSUE_ID"),
                "workspace_id": os.environ.get("MULTICA_WORKSPACE_ID"),
-               "argv": argv, "script": str(ROOT / "controller.py"),
-               "wrapper": str(ROOT / "wrapper.py")}
+               "argv": argv}
     controller = None
     try:
-        if not task_id or any(c.isspace() or c in '/\\' for c in task_id):
-            raise SOPError("missing_task_id", "MULTICA_TASK_ID must be present and contain no whitespace or path separators", "Restore MULTICA_TASK_ID from the Multica run environment; do not invent an ID.")
+        for key in ('issue_id', 'workspace_id'):
+            if not context[key]:
+                raise SOPError('missing_' + key, 'MULTICA_' + key.upper() + ' is required')
+        if argv == ['--help']:
+            context['skill'] = validate_package()
+            print(help_output(context))
+            return 0
         controller = load_controller()
-        context['skill'] = getattr(controller, 'SOP_NAME', None)
+        context['skill'] = controller.SOP_NAME
         args = arguments(context['argv'], controller)
         if getattr(args, 'workspace', None) and args.workspace != context['workspace_id']:
             raise SOPError('wrong_workspace', '--workspace must match the native run workspace')
@@ -564,22 +625,29 @@ def main(argv=None):
                 context[key] = getattr(args, flag)
         context['controller_rules'] = 'Follow controller.workflow options and state prechecks.'
         if args.help:
-            result = {"ok": True, "status": None, "accepted": False, "finished": False, "state_changed": False,
-                      "next_step": callback("Start or resume the SOP.", []), "error": None, "rules": RULES,
-                      "workflow_rules": context["controller_rules"],
-                      "usage": "wrapper.py [init | <option> [controller options] | --error <message> | --error-file <path> | --help]; wrapper.py --validate"}
-        else:
-            result = transition(args, context, controller)
-        result["reporting"] = deliver_pending()
+            print(help_output(context))
+            return 0
+        result = transition(args, context, controller)
     except Exception as error:
         result = exception_result(error, context)
         if context.get('quitted'):
-            state_path(context).unlink(missing_ok=True)
             result.update(status='quitted', state_changed=True, next_step=callback(str(error)))
+    output = redact(response(result))
+    if controller and context.get('state'):
+        state = context['state']
+        state['output'] = output
+        if not context.get('state_deleted') and not context.get('state_write_failed'):
+            try:
+                save_state(context, state)
+            except Exception as error:
+                result = exception_result(error, context)
+                output = redact(response(result))
+    context['output'] = output
     publish_artifacts(context, controller, result)
-    print(json.dumps(redact(response(result)), allow_nan=False))
+    print(json.dumps(output, allow_nan=False))
     return 0 if result["ok"] else result.get("returncode", 1)
 
 
 if __name__ == "__main__":
+    sys.modules['wrapper'] = sys.modules[__name__]
     sys.exit(main())

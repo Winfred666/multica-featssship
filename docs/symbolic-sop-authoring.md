@@ -1,166 +1,63 @@
 ---
 name: create-symbolic-sop
-description: Create or revise executable SOPs with state objects, option actions and optional live prechecks.
+description: Create or revise a working symbolic SoP by copying the runtime and writing its controller; validate it and inspect its debug preview.
 ---
 
-Copy [../templates/symbolic-sop/](../templates/symbolic-sop/) and adapt its parallel-refinement procedure.
-Skill names may contain only lowercase letters, numbers and hyphens.
-Name Multica SOPs with the `multica-` prefix. Keep their `SKILL.md` limited to when
-to use the skill, required inputs, the entry command and how to follow its choices.
-Implementation details belong in code.
-Each invocation stays within one agent task and issue. For another issue or agent,
-use native steering or a mention asking its model to call the named SOP. Exchange
-results through reply comments and steering prompts; keep delivery and review
-records out of issue metadata.
-For in-platform capabilities, give rough direction to follow Multica best practice
-and the relevant native SOP. Leave platform actions and mechanics to that SOP.
+Copy [../templates/symbolic-sop/](../templates/symbolic-sop/) into the new skill directory. Keep
+`sop.py`, `wrapper.py` and `monitor.py` unchanged; replace the example
+`controller.py` with the procedure. Keep the copied `config.json`; set `DEBUG`
+to `true` when you want the compiled HTML preview.
 
-The standalone package contains `SKILL.md`, `DEBUG.md`, `config.json`, `controller.py`, `sop.py`, `wrapper.py`, `monitor.py`
-and procedure dependencies. The wrapper creates `.state/<task_id>.json` at runtime.
-Preserve live state when revising an installed skill. Customize `controller.py`;
-`sop.py` defines the objects and `wrapper.py` drives them.
+Name Multica SoPs `multica-<name>` using lowercase letters, numbers and hyphens;
+keep names at most 60 characters.
+Write a short `SKILL.md`: when to use it, required inputs,
+`python3 <skill-directory>/wrapper.py`, and how to follow returned choices and
+error guidance. Follow recalls in the same turn; reconcile writes before retrying
+and use a returned `repaired` command once for a failed assertion.
 
-Export `workflow = Workflow(...)` with ordinary `State` objects. Declare exactly
-one initial state and one or more final states with `final=True`. Each state has a brief
-description, options, and optional read-only `precheck(context)` and `view(context)`.
-
-Each `Option(name, target, prompt, action, params=...)` owns its action. Use a short
-named function; avoid subclasses, entry/exit actions and event dispatch chains.
-`Parameter('--flag', 'What to supply')` declares required input. Use
-`required=False` for optional inputs and `value=known_value` to render and enforce
-known values. Argparse arguments such as `type=Path`, `choices=...` and
-`action='store_true'` pass through. Shared optional inputs go in `Workflow(params=...)`.
+Export `workflow = Workflow(...)` from `controller.py`. Declare one initial
+state and at least one final state; final states have no options. Each option
+names its target, prompt, action and inputs. Script fixed work; leave judgment
+at explicit choices. For example:
 
 ```python
+from pathlib import Path
 from sop import Option, Parameter, State, Workflow
 
 
-def record(args, context):
-    context['cli']('comment', 'add', context['issue_id'],
-                   '--content', args.finding, write=True)
+def verify(args, context):
+    if not Path(args.path).is_file():
+        raise context['error']('missing_file', 'Create the file, then retry.')
 
 
 workflow = Workflow(
-    State('inspect', 'Inspect the evidence.', initial=True, options=(
-        Option('record', 'finished', 'Record the confirmed finding.', record,
-               params=(Parameter('--finding', 'Confirmed finding'),)),
+    State('inspect', 'Choose the file to verify.', initial=True, options=(
+        Option('verify', 'finished', 'Verify the file exists.', verify,
+               params=(Parameter('--path', 'File to verify'),)),
     )),
-    State('finished', 'Finding recorded; stop.', final=True),
+    State('finished', 'File verified; stop.', final=True),
 )
 ```
 
-Actions receive `(args, context)`; prechecks, views and option factories receive
-`context`. Read the object interfaces in [sop.py](../templates/symbolic-sop/sop.py) and the
-context construction and `cli` implementation in [wrapper.py](../templates/symbolic-sop/wrapper.py).
+Actions receive `(args, context)`. Use read-only `precheck(context)` for live
+prerequisites and `view(context)` for decision evidence. `context['issue_id']`
+identifies the current issue; `context['cli'](*words, write=False)` runs
+`multica issue <words> --output json`. Pass separate arguments and mark writes
+with `write=True`; use native Multica SoPs for platform workflows.
+The runtime stores status and recovery in `issue.metadata["sop.<skill-name>"]`.
+Keep controller `data` internal; expose needed facts through instructions/options. Store only small procedure-specific
+settings in issue metadata when needed; keep delivery/review records in comments.
+When revising a procedure, preserve its checks, side effects, completion rules
+and live state.
 
-| Context key | Value and availability |
-| --- | --- |
-| `task_id` | Native `MULTICA_TASK_ID` string; identifies this run's JSON record. |
-| `issue_id`, `workspace_id` | Native issue/workspace IDs. A declared `--issue` input can override the issue; `--workspace` must match the native workspace. |
-| `agent_id` | Native `MULTICA_AGENT_ID`, or `None` when absent. |
-| `phase` | State name used for option selection or guidance. In a target precheck, use `result['phase']` for the target. |
-| `args` | Argparse namespace. Shared workflow inputs are available before the current precheck; selected option inputs are parsed before its action. `--some-flag` becomes `args.some_flag`; `args.event` is the selected option name, or `init` on a bare call. |
-| `initial` | Current precheck's return value, available after that check; `None` if it has no precheck. |
-| `result` | Target precheck only: generated transition result, including `phase` and any `data`, `instruction` or `accepted` value. Use `'result' in context` to distinguish target checks from current checks. |
-| `cli` | Callable `cli(*words, write=False)` described below. |
-| `error` | Exception class: `raise context['error']('invalid_child', 'Choose an open direct child.', hint=None)`. |
+The preview derives the state graph from `Workflow`; use `Branch` for automatic
+script-selected transitions. Optional action docstrings can explain local logic.
+For API details, protocol debugging or preview tuning, read [DEBUG.md](DEBUG.md)
+only as needed. Creating a SoP does not require changing the runtime or renderer.
 
-Use your own context keys to cache JSON-compatible observations within one call.
-Each wrapper invocation builds a new context. `context['state']` is the task's
-JSON record; accepted callbacks persist its fields even when the state stays
-the same. Keep the runtime's `status` and
-`recovery` fields unchanged. Read external facts from Multica or Git on later calls.
-
-`cli` runs `multica issue <words> --output json`, inheriting the process environment
-and working directory, with a 30-second timeout. Pass separate string arguments, without `multica`,
-`issue`, shell quoting or `--output`. It returns parsed JSON (the command's dict or
-list) and raises `context['error']` with code `cli_error` on a nonzero exit.
-Timeouts and invalid JSON also raise exceptions. Mark mutations with `write=True`;
-this records attempted writes for recovery, without retrying or changing permissions.
-
-```python
-issue = context['cli']('get', context['issue_id'])
-grouped = context['cli']('children', issue['id'])  # unstaged + stages[].issues
-context['cli']('comment', 'add', issue['id'], '--content', args.finding, write=True)
-```
-
-Read `multica-platform/references/issues.md` in the installed skills directory for
-issue fields, status side effects, child issues and comment contracts; its `SKILL.md`
-indexes other platform references. RSI ships those documents in
-[the platform skill](../multica-platform/SKILL.md).
-Use terminal commands `multica issue --help`, `multica issue get --help` and
-`multica issue comment add --help` for the installed CLI's exact arguments. Run
-help in the terminal, since `cli` expects JSON. Inspect relevant read-only JSON
-output for response fields. Other command groups such as `multica agent` are
-outside this helper's `issue` prefix; read their help before writing a helper.
-
-Return optional `data`, an `instruction`, or `accepted: False` to stay in the current
-state. An action may return `phase` to select a declared state through a scripted
-branch; its target precheck still runs. Agent JSON has `status`, a common state
-`instruction`, and `next_step`: a list of options, each with its own `instruction`
-and executable `command`. Keep state guidance separate from option prompts.
-Start with a bare call or `init`, then pass an option name as
-the first argument. The wrapper reads the task JSON record and checks its status
-before running an option. Invalid options or parameters return current guidance
-without changing state. Bare calls run no action. Completion removes the task JSON
-file; a later bare call or `init` starts another run within the same native task.
-
-Use `view(context)` for decision evidence and `options(context)` for choices bound
-to actual IDs. Keep both read-only; reuse observations in the current context.
-Option factories can run before selection, so option-specific arguments may not
-exist yet. Return JSON-compatible precheck observations and action results so the
-wrapper can save them for recovery.
-Script fixed work and leave judgment at explicit options. Preserve the procedure's
-conditions, side effects, rejection paths and termination behavior.
-
-A precheck reads live state and explicitly raises `AssertionError` on failure,
-including under Python `-O`. The current check runs before the action; the target
-check verifies its effects, including completion. Its context includes `args`,
-`initial` (the current check's return value) and `result`. Preserve existing checks
-and their state bindings. `Completed(instruction, data)` may signal already-finished
-work; the target check still runs. Supply `target=STATE` for a final state other
-than the default `finished`.
-
-Failed checks return a repair command. After correcting the condition and
-reconciling external writes, run it once. A repaired target check commits the saved
-result without repeating the action. A second failure returns `blocked` to the
-caller; bare resume does not retry.
-
-For an unmet workflow prerequisite, raise `context['error'](code, message, hint=...)`
-with the required next action; the saved state stays unchanged. Document the common
-exception protocol once in every generated `SKILL.md`, applying to all states:
-follow the returned error guidance, reconcile writes before retrying, use `repaired`
-once for assertion failures, and report a repeated failure through native Multica block.
-
-Run `python3 <skill-directory>/wrapper.py --validate` and focused checks for affected
-paths. Keep repository tests in `tests/`. For conservative refinement, define states directly inside the exported
-`Workflow(...)` and keep predefined prechecks with their states. The harness reads
-initial and final boundaries from these declarations. Live Multica execution
-establishes effectiveness.
-
-Write `DEBUG.md` with a first chart of the interaction states. A scripted branch
-between interaction states may use a diamond; branches need not be agent options.
-Put state internals in secondary charts. Immediately precede each with
-`State: <declared status>`. Show its entry, checks, recalls and exit states so the
-chart stands alone; prefer chart labels to prose.
-
-Set `"DEBUG": true` in the skill's `config.json` to publish `<skill-name>-state.html`
-on every state shift. The wrapper renders `controller.workflow` states, declared
-option targets and the actual transition, with state meanings, native issue/task
-IDs and assertion failures. Dynamic routes appear when selected. DEBUG defaults
-to `false`. For an existing HTML view, export read-only `artifacts(context)` from
-`controller.py` returning `{stable_filename: html_string}`; the wrapper updates
-these live artifacts after accepted callbacks. Upload failures leave workflow
-results intact.
-
-Use proactive keyword + time-trigger monitoring for long experiment scripts:
-the background job keeps logging while the SOP returns `continue`/`exception`.
-The launch option must return the monitor state immediately; only its `continue`
-recall may block.
-The task JSON keeps checkpoint and log positions; the next recall shows only new
-output. Follow the recall in the same turn. See the template's [state chart](../templates/symbolic-sop/DEBUG.md).
-Default to passive native delivery/block steering for Multica sub-issues;
-proactive escalation there is reserved for unstable DEV SOPs. A `done` option must
-check that every sub-issue, including descendants, is `done`. Otherwise raise a
-workflow exception asking the agent to finish the native sub-issue review SOP
-before recalling `done`; delivery receipts and `in_review` do not pass this gate.
+Run `python3 tests/check_symbolic_sop.py <skill-directory>`, then exercise
+the procedure in a disposable fixture. Start with `python3 <skill-directory>/wrapper.py`
+and follow the returned commands in the native Multica run environment.
+`--help` replays saved guidance without executing the procedure; before starting
+or after completion it shows the skill body. Inspect the compiled HTML when debug
+mode is enabled.

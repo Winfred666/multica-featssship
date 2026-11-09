@@ -1,33 +1,53 @@
 # Shipping flow
 
-```mermaid
-flowchart TD
-  main["MAIN drafting: prepare delegation config"] -->|propose| grill["grilling: inspect clarity"]
-  grill -->|unclear point| ask["Ask human one question with a recommendation; wait"]
-  ask -->|answer| edit["edit: patch one config field"]
-  edit --> grill
-  grill -->|clear: dispatch| dispatch["Create feature and compile Reviewer"]
-  dispatch --> dev["Developer: implement, commit and submit"]
-  dev --> review["Independent Reviewer: inspect exact commit and answer questions"]
-  review -->|corrections| dev
-  review -->|approved| hold{"Manual hold accepted or absent?"}
-  hold -->|no| human["Wait for human acceptance"]
-  human --> hold
-  hold -->|yes| integrate["Developer: merge approved commit, test and push main"]
-  integrate -->|conflict or failed check| dev
-  integrate -->|pushed| source{"Linked GitHub issue?"}
-  source -->|yes| close["Comment: integrated commit + Developer resolution<br/>Close issue; reuse comment on retry"]
-  source -->|no| receipt["Send MAIN one verified result; feature enters in_review"]
-  close --> receipt
-  receipt --> received["MAIN receives; human owns done"]
+```dot
+digraph shipping {
+  node [shape=box];
+  main [label="MAIN drafting: prepare delegation config"];
+  grill [label="grilling: inspect clarity"];
+  ask [label="Ask human one question with a recommendation; wait"];
+  edit [label="edit: patch one config field"];
+  dispatch [label="Create feature with shared shipping binding"];
+  dev [label="Developer: implement, commit and submit"];
+  review [label="Independent Reviewer: inspect exact commit and answer questions"];
+  hold [shape=diamond, label="Manual hold accepted or absent?"];
+  human [label="Wait for human acceptance"];
+  integrate [label="Developer: merge approved commit, test and push main"];
+  source [shape=diamond, label="Linked GitHub issue?"];
+  close [label="Comment: integrated commit + Developer resolution\nClose issue; reuse comment on retry"];
+  receipt [label="Send MAIN one verified result; feature enters in_review"];
+  received [label="MAIN receives; human owns done"];
+  main -> grill [label="propose"];
+  grill -> ask [label="unclear point"];
+  ask -> edit [label="answer"];
+  edit -> grill;
+  grill -> dispatch [label="clear: dispatch"];
+  dispatch -> dev;
+  dev -> review;
+  review -> dev [label="corrections"];
+  review -> hold [label="approved"];
+  hold -> human [label="no"];
+  human -> hold;
+  hold -> integrate [label="yes"];
+  integrate -> dev [label="conflict or failed check"];
+  integrate -> source [label="pushed"];
+  source -> close [label="yes"];
+  source -> receipt [label="no"];
+  close -> receipt;
+  receipt -> received;
+}
 ```
 
-| Executable procedure | States and callback internals |
+| Executable procedure | State graph and callback logic |
 | --- | --- |
-| [MAIN delegation](../controller.py) | [Delegation graph](../DEBUG.md) |
-| [Developer](../roles/developer.py) | [Developer graphs](../roles/developer-debug.md) |
-| [Reviewer](../roles/reviewer.py) | [Reviewer graphs](../roles/reviewer-debug.md) |
+| [MAIN delegation](../controller.py) | `workflow`; `propose`, `edit`, `dispatch` docstrings |
+| [Shared Developer–Reviewer shipping](../roles/feature.py) | `workflow`; phase identity guard and action docstrings |
+
+The runtime compiles each state graph from its `Workflow` declarations. Action
+docstrings supply local logic only. Enable `DEBUG` in the installed package's
+`config.json` for a selectable HTML preview; package rebuilds retain this setting
+and existing issue state.
 
 The fixture simulates Multica/GitHub actions with real Git operations. Live agent
-judgment and server routing remain outside that evidence. Integration locking
-covers one host; normal Git push rejects competing updates across hosts.
+judgment and server routing remain outside that evidence. The platform serializes agents within an issue; normal Git push rejects competing
+main updates across issues.
