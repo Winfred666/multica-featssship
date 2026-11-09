@@ -1,6 +1,5 @@
 """Native CLI, comment records and Git operations shared by the local skills."""
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
@@ -57,58 +56,6 @@ def mention(agent_id):
     return f'[@agent](mention://agent/{agent_id})'
 
 
-def reply_parent(context, fallback):
-    return getattr(context['args'], 'thread', None) or context['state'].get('reply_parent') or fallback
-
-
-def check_identity(context, binding, role):
-    if context['workspace_id'] != binding['workspace_id'] or context['issue_id'] != binding['issue_id']:
-        raise ValueError('Use this package in its native workspace and issue.')
-    if context['agent_id'] != binding[role + '_id']:
-        raise ValueError('This action belongs to the configured ' + role + ' identity.')
-    if binding['developer_id'] == binding['reviewer_id']:
-        raise ValueError('Developer and Reviewer must be different identities.')
-
-
-def feature(context, role='developer'):
-    issue = cli('issue', 'get', context['issue_id'])
-    binding = unpack(issue['description'], 'binding')
-    if not binding:
-        raise ValueError('This issue has no featssship binding.')
-    check_identity(context, binding, role)
-    if issue.get('status_category') in ('done', 'cancelled'):
-        raise ValueError('The feature issue is closed.')
-    return issue, binding
-
-
-def records(binding):
-    rows = cli('issue', 'comment', 'list', binding['issue_id'], '--thread', binding['thread_id'], '--tail', '30')
-    found = []
-    for row in rows:
-        for kind, role in (('submission', 'developer'), ('review', 'reviewer'), ('integration-rework', 'developer'), ('integration', 'developer'), ('result', 'developer')):
-            data = unpack(row.get('content', ''), kind)
-            if data and row.get('author_type') == 'agent' and row.get('author_id') == binding[role + '_id']:
-                found.append((kind, data, row))
-    return found, rows
-
-
-def latest(rows, kind):
-    return next(((data, row) for key, data, row in reversed(rows) if key == kind), (None, None))
-
-
-def current(binding):
-    rows, comments = records(binding)
-    submission, submit_row = latest(rows, 'submission')
-    review, review_row = latest(rows, 'review')
-    # A verdict belongs to one submission, even if Developer resubmits the same SHA.
-    if review and (not submit_row or review['submission_id'] != submit_row['id']):
-        review, review_row = None, None
-    correction, correction_row = latest(rows, 'integration-rework')
-    if correction and submission and correction.get('submission_id') == submit_row['id']:
-        review, review_row = {**correction, 'verdict': 'rework'}, correction_row
-    return submission, submit_row, review, review_row, rows, comments
-
-
 def repo_root():
     return Path(run('git', 'rev-parse', '--show-toplevel')).resolve()
 
@@ -141,11 +88,11 @@ def exclude_local(repo):
     path.write_text(existing)
 
 
-def test(repo, command, *, required=True):
+def test(repo, command):
     result = subprocess.run(command, shell=True, cwd=repo, text=True, capture_output=True)
     evidence = {'command': command, 'exit_code': result.returncode,
                 'output': (result.stdout + result.stderr)[-4000:]}
-    if result.returncode and required:
+    if result.returncode:
         raise ValueError('Configured check failed: ' + json.dumps(evidence))
     if not result.returncode:
         del evidence['output']
@@ -153,14 +100,9 @@ def test(repo, command, *, required=True):
     return evidence
 
 
-def human_accepts(comments, commit):
-    return any(row.get('author_type') == 'member' and
-               unpack(row.get('content', ''), 'accept') == {'commit': commit} for row in comments)
-
-
 def has_manual(issue):
     return any(label['name'] == 'manual' for label in issue.get('labels', []))
 
 
 def entry_command(name):
-    return f'Run `python3 <installed {name} skill directory>/entry.py` from the target repository root.'
+    return f'Run `python3 <installed {name} skill directory>/wrapper.py` from the target repository root.'

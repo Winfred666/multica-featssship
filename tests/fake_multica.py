@@ -53,11 +53,24 @@ def main():
         result['description'] = option('description')
     elif args[:2] == ['issue', 'get']:
         result = db['issues'][args[2]]
+    elif args[:2] == ['issue', 'metadata']:
+        result = db['issues'][args[3]]
+        metadata = result.setdefault('metadata', {})
+        if args[2] == 'set':
+            metadata[option('key')] = option('value')
+        elif args[2] == 'delete':
+            metadata.pop(option('key'), None)
+        else:
+            raise ValueError('Unsupported metadata action')
+        size = len(json.dumps(metadata).encode())
+        if size > 8192:
+            raise ValueError('Issue metadata exceeds 8 KB')
+        db['peak_metadata_bytes'] = max(db.get('peak_metadata_bytes', 0), size)
     elif args[:2] == ['issue', 'create']:
         result = {'id': new(), 'title': option('title'), 'description': text('description'),
                   'project_id': option('project'), 'workspace_id': db['workspace_id'],
                   'parent_issue_id': option('parent'), 'assignee_id': option('assignee-id'),
-                  'assignee_type': 'agent', 'labels': [], 'status': option('status')}
+                  'assignee_type': 'agent', 'labels': [], 'status': option('status'), 'metadata': {}}
         db['issues'][result['id']] = result
     elif args[:2] == ['issue', 'update']:
         result = db['issues'][args[2]]

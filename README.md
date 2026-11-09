@@ -1,12 +1,14 @@
 # multica-featssship
 
-A standalone Developer–Reviewer shipping SOP. Start with the [shipping graph](docs/workflow.md)
-and [MAIN's delegation graph](DEBUG.md); callback details live in each role's graphs.
+A standalone Developer–Reviewer shipping SOP. Start with the [shipping graph](docs/workflow.md).
+MAIN supplies the feature branch. The child uses its current issue folder.
 
 ## One-time installation
 
-Requires Python 3.11+, Git and authenticated `multica`; linked GitHub requests also
-require authenticated `gh` access to read, comment on and close the source issue.
+Requires Python 3.11+, Git and authenticated `multica`; GitHub URLs are optional source links.
+HTML preview compilation reuses Graphviz's `dot` on PATH or automatically installs
+`graphviz` with the host package manager. Installation failures report
+`dependency_install_failed`; resolve the reported error before retrying.
 Run the installer from the target repository checkout:
 
 ```bash
@@ -41,65 +43,46 @@ For unattended installation:
 To create a role, replace its `_id` with an object such as
 `"developer": {"name": "Developer", "runtime_id": "<runtime UUID>", "model": "<chosen model>"}`.
 The existing root's assignee is MAIN. Installation preserves its ID, history,
-labels and status, prefixes its title with `MAIN DEV:`, publishes direction
-scopes/questions/tests in the project description and adds the owned skills to
-agents.
+labels and status, prefixes its title with `MAIN DEV:`, and publishes selected
+scopes/questions/tests in the project description. It binds delegation to MAIN
+and the same `multica-featssship-develop-review` skill to Developer and Reviewer.
 
-| Local resource | Location |
-| --- | --- |
-| Installed skills | `.agents/skills/multica-featssship*` |
-| Generated packages and integration checkouts | `.multica/featssship` |
-| Answers and credentials | Outside the repository |
+## Use
 
-The installer adds local Git exclusions for generated resources. Retain its
-answers file and reserved package names; reconcile native state before retrying
-an uncertain external write.
+MAIN runs the installed delegation skill's `wrapper.py` from the target repository.
+Draft with `propose --title TITLE --request REQUEST --direction NAME --scope SCOPE
+--question QUESTION`. Resolve one unclear point per human question and `edit`,
+then `dispatch`. An optional `--github-issue URL` mirrors an existing source issue;
+it does not replace the delegated acceptance criteria.
 
-## Delegation
+The feature issue has one workflow: `develop → review → finished`; rework returns
+to `develop`. Both agents use the same installed skill and issue folder. Only
+the configured Developer can submit; only the configured Reviewer can judge.
+Reviewer approval merges current main, tests and pushes. A manual label, merge
+conflict or failed check sends MAIN a note and finishes.
 
-Start MAIN's installed entry command and follow the `drafting` state's guidance.
-Its proposal input is:
+MAIN creates the remote feature branch before dispatch. The issue checkout must
+already use that branch. Checkout provisioning belongs to installation/platform
+setup; the child procedure never creates or switches folders or branches.
+The child config contains only Developer ID, Reviewer ID, branch and test command.
+Request, scope and acceptance stay in the issue description; parent identity comes
+from the native parent issue.
 
-```text
-propose --title "Editor: save documents" --request "Save and reopen edits." --direction editor --scope "src/editor" --question "Can edits be saved and reopened?"
-```
+The standalone runtime follows the accepted issue-state protocol from
+[RSI 0fd1fbb4a](https://github.com/Winfred666/multica-RSI/commit/0fd1fbb4a).
+One current record under `issue.metadata["sop.multica-featssship-develop-review"]`
+contains guidance and submitted revision; completion removes only that key.
+`--help` reads without advancing. Controller data is internal. No task ID, local
+state file, folder mapping or comment-history replay is needed. Existing live
+installations are left on their installed version until explicitly upgraded.
 
-To reopen a draft in a new native task, pass `--spec <draft UUID>` and choose
-`propose`. On a comment trigger, also pass `--thread <reply UUID>`.
+## Development
 
-| Optional proposal input | Meaning |
-| --- | --- |
-| `--test-command TEXT` | Verification command; defaults to the configured direction |
-| `--github-issue URL` | Existing source link; a linked title also works |
-| `--thread UUID` | Native trigger comment to reply under |
-
-See the [specification and delegation graph](DEBUG.md).
-
-## Acceptance and delivery reference
-
-A human releases a `manual` hold by replying in the feature thread with the
-approved full commit SHA:
-
-````text
-<!-- featssship:accept -->
-```json
-{"commit": "<approved full commit SHA>"}
-```
-````
-
-Developer supplies `submit --summary "<outcome; approach; necessary links or artifacts>"`;
-`--answer` is optional. The script reports added/deleted text lines, touched-file
-and binary counts, and the three largest file diffs (ties by path; binary lines
-are `null`). It compares the submitted commit to its merge base with fetched main.
-
-## Development checks
-
-```bash
-python3 -m unittest discover -s tests -v
-python3 wrapper.py --validate
-```
-
-Tests also validate generated role wrappers. Set `FEATSSSHIP_EVIDENCE` to an
-external JSON path to retain disposable-fixture evidence. See
-[AGENTS.md](AGENTS.md) for development constraints and
-[Symbolic-SoP authoring](docs/symbolic-sop-authoring.md) for the bundled runtime.
+Run `python3 -m unittest discover -s tests -v`. Fixtures use two native agent
+identities, simulated Multica calls and a real Git remote to check correction,
+merge, role rejection and manual handoff. MAIN installation/delegation remains
+separate from the small feature procedure in [roles/feature.py](roles/feature.py).
+Build with `packages.build('delegation', ..., binding=config)` or
+`packages.build('feature', ...)`; each validates with `wrapper.py --validate`.
+The canonical nine protocol checks live in the
+[RSI creator](https://github.com/Winfred666/multica-RSI/blob/main/harness/skills/create-symbolic-sop/scripts/check.py).
