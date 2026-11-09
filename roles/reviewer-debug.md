@@ -22,7 +22,7 @@ flowchart LR
   entry[Read request, source, diff and test evidence] --> judgment{Answer requested and minimum questions}
   judgment --> approve[Test and publish commit approval]
   judgment --> rework[Publish concrete corrections]
-  approve --> mention[Mention Developer in feature thread]
+  approve --> mention[Steer Developer in feature thread]
   rework --> mention
   mention --> finished
 ```

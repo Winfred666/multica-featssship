@@ -5,11 +5,13 @@ flowchart TD
   resume --> implement
   resume --> await_review
   resume --> integrate
+  resume --> finished
+  implement -->|prepare| implement
   implement -->|submit| await_review
   await_review -->|corrections| implement
   await_review -->|approved| integrate
   integrate -->|failed merge or check| implement
-  integrate -->|verified and pushed| finished
+  integrate -->|pushed, source closed if linked, MAIN notified| finished
 ```
 
 State: resume
@@ -50,13 +52,26 @@ State: integrate
 
 ```mermaid
 flowchart TD
-  entry[Check current Reviewer approval] --> hold{Manual hold accepted by member?}
+  entry[Check current Reviewer approval of latest submission] --> hold{Manual hold accepted by member?}
   hold -->|no| wait[End turn for human]
   hold -->|yes or absent| lock[Acquire host integration lock]
-  lock --> merge[Fetch main and merge approved commit]
+  lock -->|busy| retry[End turn; retry integration]
+  lock -->|acquired| revision[Fetch main; verify approved branch head]
+  revision --> saved{Integration already recorded?}
+  saved -->|yes| verify[Verify recorded revision is on main]
+  saved -->|no| merge[Merge approved commit in disposable checkout]
   merge --> test[Test integrated checkout]
-  test -->|pass| push[Push main and publish one result to MAIN]
+  test -->|pass| push[Push main; record integration]
   merge -->|conflict| implement
   test -->|fail| implement
-  push --> finished
+  push --> linked{Linked GitHub source?}
+  verify --> linked
+  linked -->|yes| comment[Post integrated commit and Developer resolution only; reuse existing comment]
+  comment --> close[Close source issue; verify closure]
+  comment -->|error| retry
+  close -->|error| retry
+  close --> receipt[Send or reuse one inline result; steer MAIN]
+  linked -->|no| receipt
+  receipt --> review[Feature enters in_review; human owns done]
+  review --> finished
 ```

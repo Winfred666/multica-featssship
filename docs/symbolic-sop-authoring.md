@@ -67,8 +67,8 @@ context construction and `cli` implementation in [wrapper.py](../templates/symbo
 
 Use your own context keys to cache JSON-compatible observations within one call.
 Each wrapper invocation builds a new context. `context['state']` is the task's
-JSON record; the template stores its bound test script there. Persist procedure
-facts when an action stays in the same state; keep the runtime's `status` and
+JSON record; accepted callbacks persist its fields even when the state stays
+the same. Keep the runtime's `status` and
 `recovery` fields unchanged. Read external facts from Multica or Git on later calls.
 
 `cli` runs `multica issue <words> --output json`, inheriting the process environment

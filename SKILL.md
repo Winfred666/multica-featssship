@@ -1,12 +1,16 @@
 ---
 name: multica-featssship
-description: Delegate one configured feature or fix to separate Developer and Reviewer agents and receive its verified result.
+description: Draft a feature delegation, clarify one point at a time with the human, then dispatch separate Developer and Reviewer agents.
 ---
 
-From the installed MAIN DEV: issue and target repository root, run
-`python3 <this-skill-directory>/entry.py`. Dispatch the original request, title
-and configured direction; use `--question` to override acceptance and `--thread`
-to reply to a trigger comment. Installation is in README.md.
+Use in the installed MAIN DEV: issue. From the target repository root, run
+`python3 <this-skill-directory>/entry.py` and follow its choices. On comment
+triggers, pass `--thread <trigger UUID>` first.
 
-The callback creates the feature issue and Reviewer package. End the turn;
-receive the verified result in the dispatch thread.
+Follow `drafting` and `grilling`. To reopen a draft in a new native task, pass
+`--spec <draft UUID>` and choose `propose`.
+
+An optional GitHub URL is a source link for mirroring and closure. Scope and
+acceptance come from the delegation config. Never create GitHub issues
+routinely. MAIN receives the final result and ends the turn when instructed.
+[State and callback graphs](DEBUG.md). Installation: README.md.

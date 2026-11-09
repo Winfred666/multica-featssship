@@ -312,7 +312,7 @@ def transition(args, context, controller):
     json.dumps(result, allow_nan=False)
     if finished:
         state_path(context).unlink(missing_ok=True)
-    elif changed:
+    elif changed or result['accepted']:
         state.pop('recovery', None)
         state['status'] = status
         save_state(context, state)
@@ -490,7 +490,7 @@ def state_artifact(context, controller, result):
     diagram = 'flowchart TD\n' + '\n'.join(
         f'{name}["{name}"]' for name in states)
     edges = {(state.name, option.name): option.target for state in states.values()
-             if not callable(state.options) for option in state.options}
+             for option in state.choices(context)}
     source = context.get('prior_status')
     if source in states and phase in states and context['argv'] and (
             result.get('accepted') or assertion.get('boundary') == 'after'):

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import shutil
 
 from common import check_repo, cli, entry_command, exclude_local, repo_root, write_json
 from packages import bind, build, install
@@ -111,18 +112,17 @@ def execute(config, path):
     project_text = section(project.get('description'), 'Concurrent directions\n\n' + directions)
     cli('project', 'update', project['id'], '--description', project_text)
     root_text = section(root.get('description'),
-                        'MAIN delegates a feature/fix request with its direction and acceptance question, then receives one verified result. '
+                        'MAIN drafts and delegates features. '
                         'Developer owns implementation and approved integration; the distinct Reviewer owns acceptance.\n\n' + directions + '\n\n' + entry_command(name))
     title = 'MAIN DEV: ' + re.sub(r'^(?:MAIN DEV:\s*)+', '', root['title'])
     cli('issue', 'update', root['id'], '--title', title, '--description-stdin', '--no-start', input=root_text)
     destination = repo / '.agents' / 'skills'
-    import shutil
     for package in (developer_package, root_package):
         shutil.copytree(package, destination / package.name, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns('.state', '__pycache__', '.errors'))
     command = shlex.join(['python3', str(destination / name / 'wrapper.py')])
     return {'root_issue_id': root['id'], 'developer_id': developer, 'reviewer_id': reviewer,
-            'command': command, 'inputs': 'dispatch --title TITLE --request REQUEST --direction NAME [--question QUESTION]'}
+            'command': command, 'inputs': 'propose --title TITLE --request REQUEST --direction NAME --scope SCOPE --question QUESTION [--github-issue URL]'}
 
 
 if __name__ == '__main__':

@@ -8,7 +8,7 @@ import zipfile
 from common import cli, write_json
 
 ROOT = Path(__file__).resolve().parent
-RUNTIME = ('wrapper.py', 'sop.py', 'monitor.py', 'config.json', 'common.py', 'commit_report.py', 'entry.py', 'packages.py')
+RUNTIME = ('wrapper.py', 'sop.py', 'monitor.py', 'config.json', 'common.py', 'commit_report.py', 'github_issue.py', 'entry.py', 'packages.py')
 
 
 def build(role, destination, *, name=None, binding=None):

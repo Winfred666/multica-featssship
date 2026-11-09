@@ -30,7 +30,7 @@ def main():
                   'workspace_id': db['workspace_id'], 'instructions': option('instructions')}
         db['agents'][result['id']] = result
     elif args[:3] == ['agent', 'skills', 'list']:
-        result = [{'id': key} for key in db['bindings'].get(args[3], [])]
+        result = [{'id': key, 'name': db['skills'][key]['name']} for key in db['bindings'].get(args[3], [])]
     elif args[:3] == ['agent', 'skills', 'add']:
         bound = db['bindings'].setdefault(args[3], [])
         if option('skill-ids') not in bound:

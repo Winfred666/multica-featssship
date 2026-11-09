@@ -7,6 +7,7 @@ from common import (block, check_repo, clean, cli, comment, current, entry_comma
                     exclude_local, feature, git, has_manual, human_accepts, latest,
                     mention, reply_parent, repo_root, test)
 from commit_report import commit_report
+from github_issue import close_issue, issue_link
 from packages import compile_review
 from sop import Option, Parameter, State, Workflow
 
@@ -158,6 +159,10 @@ def integration(args, context):
                     comment(binding['issue_id'], block('integration', integrated), reply_parent(context, review_row['id']))
                 finally:
                     git(repo, 'worktree', 'remove', '--force', str(checkout))
+        url = binding.get('github_issue') or issue_link(context['issue']['title'])
+        if url:
+            close_issue(url, binding, integrated, submission)
+            integrated = {**integrated, 'github_issue': url}
         # A receipt in MAIN makes a retry after an uncertain write observable.
         main_rows = cli('issue', 'comment', 'list', binding['root_issue_id'], '--thread', binding['main_thread_id'], '--tail', '30')
         from common import unpack
