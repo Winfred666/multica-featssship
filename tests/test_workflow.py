@@ -61,9 +61,9 @@ class WorkflowFixture(unittest.TestCase):
             self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
         return process
 
-    def commit(self, message):
+    def commit(self, message, *, amend=False):
         self.call('git', 'add', 'message.txt')
-        self.call('git', 'commit', '-m', message)
+        self.call('git', 'commit', *(['--amend'] if amend else []), '-m', message)
         return self.call('git', 'rev-parse', 'HEAD').stdout.strip()
 
     def db(self):
@@ -107,8 +107,8 @@ class WorkflowFixture(unittest.TestCase):
         task = task or self.resume()[0]
         self.invoke(self.developer, 'prepare', task=task)
         (self.repo / 'message.txt').write_text(text + '\n')
-        commit = self.commit(text)
-        output = self.invoke(self.developer, 'submit', '--summary', 'Set requested text.', '--answer', 'Message updated.', task=task)
+        commit = self.commit(text, amend=hasattr(self, 'submission_id'))
+        output = self.invoke(self.developer, 'submit', '--summary', 'Updated the message using the existing text file.', task=task)
         self.submission_id = output['data']['submission_id']
         # Emulate the daemon materializing the newly imported, independent skill.
         skill = self.db()['skills'][self.binding['reviewer_skill_id']]
@@ -154,7 +154,13 @@ class WorkflowFixture(unittest.TestCase):
         for package in (self.root_package, self.developer):
             self.call(sys.executable, str(package / 'wrapper.py'), '--validate')
         self.dispatch()
+        db = self.db()
+        db['runs'] = [{'id': str(uuid.uuid4()), 'issue_id': self.feature_id, 'status': 'running',
+                       'agent_id': self.config[role + '_id']} for role in ('reviewer', 'developer')]
+        self.db_path.write_text(json.dumps(db))
         first_commit = self.submit('almost')
+        posted = next(call for call in reversed(self.db()['calls']) if call[:4] == ['issue', 'comment', 'add', self.feature_id])
+        self.assertEqual([posted[i + 1] for i, word in enumerate(posted) if word == '--steer'], [db['runs'][0]['id']])
         compiled = json.loads((self.reviewer / 'review.json').read_text())
         self.assertEqual(compiled['commit'], first_commit)
         self.assertEqual(len(compiled['questions']), 3)
@@ -162,17 +168,25 @@ class WorkflowFixture(unittest.TestCase):
         denied = self.invoke(self.reviewer, role='developer', ok=False)
         self.assertIn('error', denied)
         self.review('rework')
+        db = self.db()
+        db['runs'] = []
+        self.db_path.write_text(json.dumps(db))
         second_commit = self.submit('shipped')
         self.assertNotEqual(first_commit, second_commit)
+        self.assertEqual(self.call('git', 'rev-list', '--count', 'origin/main..HEAD').stdout.strip(), '1')
         approved = self.review('approve')
         task, result = self.resume()
         self.assertEqual(result['status'], 'integrate')
         result = self.invoke(self.developer, 'integrate', task=task, trigger=approved['data']['review_id'])
         self.assertEqual(result['status'], 'finished')
+        submission = unpack(next(row for row in self.db()['comments'] if row['id'] == self.submission_id)['content'], 'submission')
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'shipped\n')
         self.assertEqual(self.db()['issues'][self.feature_id]['status'], 'in_review')
         results = [row for row in self.db()['comments'] if row['issue_id'] == self.ids['root'] and unpack(row['content'], 'result')]
         self.assertEqual(len(results), 1)
+        delivered = unpack(results[0]['content'], 'result')
+        self.assertEqual(delivered['changes'], submission['changes'])
+        self.assertEqual(delivered['summary'], submission['summary'])
         self.assertIn('mention://agent/' + self.ids['main'], results[0]['content'])
         # Model a process ending after publication but before its final status write.
         db = self.db()
@@ -236,7 +250,8 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(self.call('git', 'rev-parse', 'HEAD').stdout.strip(), first_commit)
         self.assertEqual((correction / 'message.txt').read_text(), 'almost\n')
         second_commit = self.submit('shipped', task=task)
-        self.assertEqual(self.call('git', 'rev-parse', second_commit + '^').stdout.strip(), first_commit)
+        self.assertEqual(self.call('git', 'rev-parse', second_commit + '^').stdout.strip(),
+                         self.call('git', 'rev-parse', first_commit + '^').stdout.strip())
         approved = self.review('approve')
         task, resumed = self.resume()
         self.assertEqual(resumed['status'], 'integrate')

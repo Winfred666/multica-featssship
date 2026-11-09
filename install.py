@@ -66,11 +66,9 @@ def agent(config, role, path):
             for field in ('name', 'runtime_id', 'model'):
                 ask(settings, field, role + ' ' + field)
             write_json(path, config)
-            settings_text = ('Use the repository-owned multica-featssship procedures supplied by the issue. '
-                             'Follow the returned callbacks under your native task ID. '
-                             'Keep human manual holds. MAIN dispatches and receives only. ')
-            settings_text += ('Implement and integrate only after independent Reviewer approval.' if role == 'developer' else
-                              'Inspect the submitted revision independently, leave source unchanged, and approve or return corrections.')
+            settings_text = 'Use the issue’s multica-featssship callbacks. '
+            settings_text += ('Implement, submit for review and integrate the approved commit.' if role == 'developer' else
+                              'Review the submitted commit without editing source; approve or return corrections.')
             created = cli('agent', 'create', '--name', settings['name'], '--runtime-id', settings['runtime_id'],
                           '--model', settings['model'], '--instructions', settings_text)
             config[key] = created['id']

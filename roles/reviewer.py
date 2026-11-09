@@ -46,7 +46,7 @@ def prepare(args, context):
     context['state']['test_evidence'] = evidence
     return {'data': {'checkout': str(checkout), 'commit': commit, 'test': evidence,
                      'diff_command': f'git -C {checkout} diff origin/main...{commit}'},
-            'instruction': 'Inspect the request, submitted source and diff in this checkout. Answer all questions, then approve or return concrete corrections. Leave source unchanged.'}
+            'instruction': 'Inspect the request, source and diff. Answer the review questions; approve or return corrections.'}
 
 
 def verdict(args, context):
@@ -57,7 +57,7 @@ def verdict(args, context):
         raise ValueError('Prepare and inspect this task’s submitted checkout first.')
     clean(checkout)
     if context['review']:
-        return {'data': {'review_id': context['review_row']['id']}, 'instruction': 'This submission already has a verdict. End this turn.'}
+        return {'data': {'review_id': context['review_row']['id']}, 'instruction': 'Verdict already delivered; end this turn.'}
     data = {'commit': commit, 'submission_id': context['submission_row']['id'],
             'verdict': 'approved' if args.event == 'approve' else 'rework',
             'answer': args.answer, 'necessary_additions': args.necessary_additions,
@@ -66,9 +66,10 @@ def verdict(args, context):
         data['test'] = context['state']['test_evidence']
         if data['test']['exit_code']:
             raise ValueError('The submitted revision failed its configured check. Return corrections.')
-    row = comment(binding['issue_id'], block('review', data) + '\n\n' + mention(binding['developer_id']) +
-                  (' integrate the approved submission.' if args.event == 'approve' else ' correct these findings and submit for fresh review.') +
-                  ' ' + entry_command('multica-featssship-developer'), reply_parent(context, context['submission_row']['id']))
+    row = comment(binding['issue_id'], mention(binding['developer_id']) +
+                  (' Integrate the approved commit.' if args.event == 'approve' else ' Fix the findings and resubmit.') +
+                  ' ' + entry_command('multica-featssship-developer') + '\n\n' + block('review', data),
+                  reply_parent(context, context['submission_row']['id']), steer_agent=binding['developer_id'])
     git(repo_root(), 'worktree', 'remove', str(checkout))
     return {'data': {'review_id': row['id'], **data}}
 
@@ -79,11 +80,11 @@ PARAMS = (Parameter('--answer', 'Answer to the requested acceptance question'),
           Parameter('--finding', 'Concrete findings or approval rationale'))
 
 workflow = Workflow(
-    State('receive', 'Read the original request and current submitted revision independently.', initial=True, precheck=observed, view=view, options=(
+    State('receive', 'Read the request and submitted commit.', initial=True, precheck=observed, view=view, options=(
         Option('prepare', 'inspect', 'Fetch and test the exact submitted revision in a disposable checkout.', prepare),)),
-    State('inspect', 'Independently inspect the submitted source; answer the acceptance and minimum review questions.', precheck=observed, view=view, options=(
+    State('inspect', 'Inspect the diff and answer the review questions.', precheck=observed, view=view, options=(
         Option('approve', 'finished', 'Approve this submitted commit.', verdict, params=PARAMS),
         Option('rework', 'finished', 'Return concrete corrections to Developer.', verdict, params=PARAMS),)),
-    State('finished', 'Verdict delivered in the feature issue; end this turn.', final=True),
+    State('finished', 'Verdict delivered; end this turn.', final=True),
     params=(Parameter('--thread', 'Native triggering comment UUID for this task', required=False),),
 )

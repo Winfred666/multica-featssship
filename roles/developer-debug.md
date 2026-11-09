@@ -29,9 +29,10 @@ State: implement
 ```mermaid
 flowchart LR
   entry[Check binding] --> prepare[Prepare feature branch]
-  prepare --> source[Implement and commit]
-  source --> submit[Test and push exact revision]
-  submit --> compile[Compile Reviewer and mention]
+  prepare --> source[Implement; amend the same feature commit for corrections]
+  source --> commits[Require one feature commit against fetched main]
+  commits --> submit[Test, then push with lease on the previous submission]
+  submit --> compile[Report line totals and top three files; compile and steer Reviewer for fresh approval]
   compile --> await_review
 ```
 

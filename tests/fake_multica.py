@@ -68,6 +68,8 @@ def main():
     elif args[:2] == ['issue', 'status']:
         result = db['issues'][args[2]]
         result.update(status=args[3], status_category=args[3])
+    elif args[:2] == ['issue', 'runs']:
+        result = [row for row in db.get('runs', []) if row['issue_id'] == args[2]]
     elif args[:3] == ['issue', 'comment', 'add']:
         parent = option('parent')
         if os.environ.get('FEATSSSHIP_TRIGGER') and args[3] == os.environ['MULTICA_ISSUE_ID']:

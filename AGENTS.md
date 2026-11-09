@@ -2,6 +2,8 @@
 
 Read README.md and docs/workflow.md. Build the smallest complete Developer–Reviewer prototype using the bundled current Symbolic-SoP template. Keep this repository atomic; do not add submodules.
 
+Keep one commit per feature. Amend corrections and finish verification before pushing.
+
 The first assigned prototype issue is explicitly authorized to develop and commit directly on `main`. It carries `dev` and `manual`; human review owns acceptance. Verify its repository and branch before editing. Report the prototype in its native issue and wait for human acceptance. Do not create a PR unless requested.
 
 Installation is a one-time README-guided script. Root delegation is the only root SOP; Developer is a fixed supporting skill, and Reviewer is compiled for each requested question. Use standalone repository-owned procedures and native Multica CLI actions. The product must not invoke system distribution, review or delivery SOP skills. The supplied generic authoring guide's native-SOP suggestions yield to this product requirement.

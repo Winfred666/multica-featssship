@@ -42,10 +42,14 @@ def unpack(content, kind):
     return json.loads(match[1]) if match else None
 
 
-def comment(issue_id, content, parent=None):
+def comment(issue_id, content, parent=None, *, steer_agent=None):
     words = ['issue', 'comment', 'add', issue_id, '--content-stdin']
     if parent:
         words += ['--parent', parent]
+    if steer_agent:
+        for row in cli('issue', 'runs', issue_id, '--active'):
+            if row['agent_id'] == steer_agent and row['status'] == 'running':
+                words += ['--steer', row['id']]
     return cli(*words, input=content)
 
 
@@ -143,6 +147,8 @@ def test(repo, command, *, required=True):
                 'output': (result.stdout + result.stderr)[-4000:]}
     if result.returncode and required:
         raise ValueError('Configured check failed: ' + json.dumps(evidence))
+    if not result.returncode:
+        del evidence['output']
     clean(repo)
     return evidence
 
@@ -157,4 +163,4 @@ def has_manual(issue):
 
 
 def entry_command(name):
-    return f'From the target repository root, run python3 <installed {name} skill directory>/entry.py, then follow its returned commands.'
+    return f'Run `python3 <installed {name} skill directory>/entry.py` from the target repository root.'

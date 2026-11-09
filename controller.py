@@ -39,12 +39,12 @@ def dispatch(args, context):
         write_json(receipt, owned)
     binding.update(issue_id=owned['issue_id'], branch='featssship/' + owned['issue_id'])
     if 'thread_id' not in owned:
-        row = comment(binding['issue_id'], 'Feature implementation, review and integration share this thread.')
+        row = comment(binding['issue_id'], 'Feature implementation, review and integration.')
         owned['thread_id'] = row['id']
         write_json(receipt, owned)
     binding['thread_id'] = owned['thread_id']
     if 'main_thread_id' not in owned:
-        row = comment(context['issue_id'], 'Dispatched feature ' + binding['issue_id'] + '. Its verified result will arrive here.', args.thread)
+        row = comment(context['issue_id'], 'Dispatched feature ' + binding['issue_id'] + '.', args.thread)
         owned['main_thread_id'] = row['id']
         write_json(receipt, owned)
     binding['main_thread_id'] = owned['main_thread_id']
@@ -63,7 +63,7 @@ def dispatch(args, context):
     owned['completed'] = True
     write_json(receipt, owned)
     return {'data': {'issue_id': binding['issue_id'], 'reviewer_skill': name},
-            'instruction': 'Feature dispatched. MAIN receives its result in this thread; end this turn.'}
+            'instruction': 'Dispatched; end this turn.'}
 
 
 workflow = Workflow(

@@ -82,7 +82,7 @@ The repository root exposes one delegation SOP. It receives the feature/fix requ
 
 The fixed Developer skill and compiled Reviewer skills are supporting packages, not additional root delegation SOPs. Install them into the target repository's local skill area and give child runs an entry command anchored to that repository root. Normal repository skills may coexist with these packages.
 
-- Developer implements, runs the configured focused checks and mentions the bound Reviewer with the submitted commit and evidence.
+- Developer implements and submits a concise outcome, technical approach and necessary links or artifacts. The callback tests, reports the committed diff inline and steers Reviewer.
 - Reviewer independently inspects that commit against the original request and acceptance question, leaves source unchanged, and approves or returns concrete corrections in the same issue.
 - The agent executing the workflow merges the approved commit through serialized integration, runs the configured checks and pushes after success. It sends MAIN one result with the verdict, integrated revision and concise evidence. Existing human holds remain effective.
 
@@ -108,7 +108,11 @@ A failed merge or integration check returns to Developer. Correct the feature
 against current main, commit and submit again; Reviewer must approve that new
 submission. Successful integration moves the feature to `in_review`; a human owns
 `done`. The result notice to MAIN contains the Reviewer answer, approved commit,
-integrated revision, check output and native review reference.
+integrated revision, check result and native review reference.
+
+Submit with `--summary "<outcome; approach; necessary links or artifacts>"`.
+Delivery comments include added/deleted lines and the three largest file diffs.
+They steer Reviewer through its mention and targeted `--steer` for an active run.
 
 See [workflow design](docs/workflow.md) and the [current Symbolic-SoP authoring guidance](docs/symbolic-sop-authoring.md). The unmodified runtime template is included in [templates/symbolic-sop](templates/symbolic-sop/).
 
