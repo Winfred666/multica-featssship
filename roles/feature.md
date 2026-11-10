@@ -3,11 +3,13 @@ name: multica-featssship-develop-review
 description: Developer implements, tests and integrates; Reviewer only reads and returns a verdict in the same issue.
 ---
 
-Use the issue's current folder and feature branch supplied by MAIN. Read its
+Use the issue's current folder and MAIN's configured feature branch. Read its
 request, scope and acceptance question. Run `python3 <this-skill-directory>/wrapper.py`.
 Pass `--thread <trigger UUID>` on comment-triggered calls.
-Both agents use that same folder and branch; do not create a review checkout or
-switch branches. The verdict checks the shared tree and submitted HEAD in place.
+Start directly in `develop` on the issue's existing branch selected by MAIN.
+Neither role names, creates, renames or switches branches, or makes another checkout.
+The verdict checks that branch, repository and submitted HEAD
+in place. A claimed short name is an error, never permission to overwrite another feature.
 
 Developer implements one feature commit, amends corrections, tests and submits.
 Reviewer only reads the exact submitted diff. Do not edit source, run tests,

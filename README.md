@@ -1,98 +1,61 @@
 # multica-featssship
 
-A standalone Developer–Reviewer shipping SOP. Start with the [shipping graph](docs/workflow.md).
-MAIN supplies the feature branch. The child uses its current issue folder.
+Ship features with three agents: MAIN delegates, Developer implements and
+integrates, and Reviewer independently approves or requests corrections.
 
-## One-time installation
+## Install
 
-Requires Python 3.11+, Git and authenticated `multica`; GitHub URLs are optional source links.
-HTML preview compilation reuses Graphviz's `dot` on PATH or automatically installs
-`graphviz` with the host package manager. Installation failures report
-`dependency_install_failed`; resolve the reported error before retrying.
-Run the installer from the target repository checkout:
+Requires Python 3.11+, Git and authenticated `multica`.
+
+1. Create an installation issue in the target Multica project and assign an
+   installer agent. Give it this README and any known runtime/model choices.
+2. Tell the installer which repository needs featssship. If it is not known,
+   the installer asks: **Which target repository needs featssship?** Give the
+   Git URL of the code you want to ship, not necessarily this repository.
+3. Answer one question at a time about each direction's name, code scope,
+   acceptance question and test command. Choose distinct Developer and Reviewer
+   agents, or the runtimes and models for creating them.
+4. Installation creates its own `MAIN DEV:` child issue. MAIN defaults to the
+   installer's runtime and model. Continue on that child when setup is complete;
+   you do not need to find or create a separate MAIN issue.
+
+### For the installer agent
+
+Reuse an available featssship checkout and facts already supplied. Run:
 
 ```bash
-git clone https://github.com/Winfred666/multica-featssship.git
-cd /path/to/target-repository
-python3 /path/to/multica-featssship/install.py --config /path/outside-repository/featssship-answers.json
+python3 /path/to/multica-featssship/install.py \
+  --config /path/outside-repository/featssship-answers.json
 ```
 
-The installer asks for missing values and saves successful IDs in the answers
-file. Rerun with that file to reuse agents, skills and the existing root. MAIN,
-Developer and Reviewer must be distinct agents in the selected workspace.
+When the script returns `needs_input`, ask only its `question` in the triggering
+thread and end the turn. Save the reply under the returned `field` in the answers
+file, then rerun the same command. A field such as `directions.0.scope` means
+`scope` in the first direction. Keep the same answers file throughout.
 
-For unattended installation:
+Once the target repository is known, resume from its checkout root. Keep answers
+and generated files out of Git. Reuse supplied agent IDs; resolve runtime choices
+from the catalog instead of asking the human for UUIDs. On success, use the
+returned command on the returned MAIN child, not the installation issue.
 
-```json
-{
-  "workspace_id": "<workspace UUID>",
-  "project_id": "<project UUID>",
-  "root_issue_id": "<existing agent-assigned MAIN root UUID>",
-  "repository": "https://github.com/owner/target",
-  "developer_id": "<existing Developer UUID>",
-  "reviewer_id": "<different existing Reviewer UUID>",
-  "directions": [{
-    "name": "editor",
-    "scope": "src/editor and its focused tests",
-    "question": "Can a user save and reopen the edited document?",
-    "test_command": "python3 -m unittest discover -s tests/editor"
-  }]
-}
+## Ship a feature
+
+On the MAIN child, describe the requested change, direction and acceptance
+criteria. MAIN uses the installed delegation command from the target repository:
+
+```text
+propose --name tree-horizontal-more --request REQUEST --direction NAME --scope SCOPE --question QUESTION
 ```
 
-To create a role, replace its `_id` with an object such as
-`"developer": {"name": "Developer", "runtime_id": "<runtime UUID>", "model": "<chosen model>"}`.
-The existing root's assignee is MAIN. Installation preserves its ID, history,
-labels and status, prefixes its title with `MAIN DEV:`, and publishes selected
-scopes/questions/tests in the project description. It binds delegation to MAIN
-and the same `multica-featssship-develop-review` skill to Developer and Reviewer.
+MAIN clarifies one point at a time with the human, uses `edit` to record each
+answer, then calls `dispatch`. Give a short feature name; the selected direction
+formats it as, for example, `feat/frontend/tree-horizontal-more`. Use
+`--github-issue URL` to link a source issue when needed.
 
-## Use
+Developer implements and submits. Reviewer reads the submitted revision and
+approves it or requests corrections in the same issue. Developer owns tests and
+approved integration, then sends MAIN one verified result. A manual label keeps
+integration pending human action. Human acceptance owns completion.
 
-MAIN runs the installed delegation skill's `wrapper.py` from the target repository.
-Draft with `propose --title TITLE --request REQUEST --direction NAME --scope SCOPE
---question QUESTION`. Resolve one unclear point per human question and `edit`,
-then `dispatch`. An optional `--github-issue URL` mirrors an existing source issue;
-it does not replace the delegated acceptance criteria.
-
-The feature issue has one workflow: `develop → review → integrate → finished`; rework returns
-to `develop`. Both agents use the same installed skill and issue folder. Only
-the configured Developer can submit; only the configured Reviewer can judge.
-Reviewer only reads and returns approval or corrections; no source writes, tests,
-merge or push. Approval hands the approved revision back to Developer for tests,
-integration and reporting. A manual label, merge conflict or failed check sends
-MAIN a note and finishes. Wrong-role action calls reject on stderr without JSON or state
-changes. Each successful submit, verdict or parent report posts one recipient
-TODO with a result link. Only a matching running recipient with
-`can_supplement: true` is steered; otherwise the mention takes the normal route.
-The sender receives only: `Delivery/review/work done this round, exit directly and silently`.
-Already-reported calls return the same sentence without another delivery.
-Receiver callbacks stay out of the sender response; failures remain errors.
-This is SOP guidance, not runner-enforced completion or measured token savings.
-Runtime enforcement is tracked in [multica-RSI#40](https://github.com/Winfred666/multica-RSI/issues/40).
-
-MAIN creates the remote feature branch before dispatch. The issue checkout must
-already use that branch. Checkout provisioning belongs to installation/platform
-setup; the child procedure never creates or switches folders or branches.
-The child config contains only Developer ID, Reviewer ID, branch and test command.
-Request, scope and acceptance stay in the issue description; parent identity comes
-from the native parent issue.
-
-The standalone runtime follows the accepted issue-state protocol from
-[RSI 0fd1fbb4a](https://github.com/Winfred666/multica-RSI/commit/0fd1fbb4a).
-One current record under `issue.metadata["sop.multica-featssship-develop-review"]`
-contains guidance and submitted revision; completion removes only that key.
-`--help` reads without advancing. Controller data is internal. No task ID, local
-state file, folder mapping or comment-history replay is needed. Existing live
-installations are left on their installed version until explicitly upgraded.
-
-## Development
-
-Run `python3 -m unittest discover -s tests -v`. Fixtures use two native agent
-identities, simulated Multica calls and a real Git remote to check correction,
-merge, role rejection and manual handoff. MAIN installation/delegation remains
-separate from the small feature procedure in [roles/feature.py](roles/feature.py).
-Build with `packages.build('delegation', ..., binding=config)` or
-`packages.build('feature', ...)`; each validates with `wrapper.py --validate`.
-The canonical nine protocol checks live in the
-[RSI creator](https://github.com/Winfred666/multica-RSI/blob/main/harness/skills/create-symbolic-sop/scripts/check.py).
+The agents' HTML state graphs show the current step during a run. See the
+[shipping flow](docs/workflow.md) for the full graph.

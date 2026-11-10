@@ -9,6 +9,10 @@ triggers, pass `--thread <trigger UUID>` first.
 
 Follow `drafting` and `grilling`. To reopen a completed draft, pass
 `--spec <draft UUID>` and choose `propose`.
+MAIN supplies only `--name tree-horizontal-more` for branch naming. The selected
+direction's installed `branch_prefix` formats the full name, for example
+`feat/frontend/tree-horizontal-more` or `fix/cli/tree-horizontal-more`. The draft
+shows that name and dispatch binds it to the one feature issue. `--title` is optional.
 
 An optional GitHub URL is a source link for mirroring. Scope and
 acceptance come from the delegation config. Never create GitHub issues

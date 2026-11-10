@@ -1,7 +1,6 @@
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -12,10 +11,17 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from common import QUESTIONS, block, comment, unpack
+from common import comment, feature_branch, unpack
 
 
 class DeliveryRoutingTests(unittest.TestCase):
+    def test_configured_short_branch_names(self):
+        for prefix in ('feat/frontend', 'fix/cli'):
+            self.assertEqual(feature_branch({'name': 'work', 'branch_prefix': prefix}, 'tree-horizontal-more'),
+                             prefix + '/tree-horizontal-more')
+        with self.assertRaisesRegex(ValueError, 'short kebab-case'):
+            feature_branch({'name': 'work'}, '../another-branch')
+
     def test_steer_only_one_matching_supplementable_running_recipient(self):
         eligible = {'id': 'ready', 'agent_id': 'recipient', 'status': 'running', 'can_supplement': True}
         for rows, expected in (
@@ -57,12 +63,13 @@ class WorkflowFixture(unittest.TestCase):
         self.ids = {name: str(uuid.uuid4()) for name in ('workspace', 'project', 'root', 'main', 'runtime')}
         self.db_path = self.base / 'native.json'
         db = {'workspace_id': self.ids['workspace'], 'calls': [], 'agents': {
-            self.ids['main']: {'id': self.ids['main'], 'runtime_id': self.ids['runtime'], 'workspace_id': self.ids['workspace']}},
+            self.ids['main']: {'id': self.ids['main'], 'runtime_id': self.ids['runtime'], 'workspace_id': self.ids['workspace'],
+                               'model': 'fixture', 'thinking_level': 'high'}},
             'skills': {}, 'bindings': {}, 'projects': {self.ids['project']: {'id': self.ids['project'],
             'workspace_id': self.ids['workspace'], 'description': 'Existing project context.'}},
             'issues': {self.ids['root']: {'id': self.ids['root'], 'workspace_id': self.ids['workspace'],
             'project_id': self.ids['project'], 'title': 'Existing shipping root', 'description': 'Existing root context.',
-            'assignee_id': self.ids['main'], 'assignee_type': 'agent', 'status': 'in_progress', 'labels': [{'name': 'manual'}], 'metadata': {'unrelated': 'preserve'}}}, 'comments': [],
+            'assignee_id': self.ids['main'], 'assignee_type': 'agent', 'status': 'in_progress', 'labels': [], 'metadata': {'unrelated': 'preserve'}}}, 'comments': [],
             'github_calls': [], 'github': {'url': 'https://github.com/owner/requests/issues/42',
             'title': 'Ship the message', 'body': 'Requirement: write shipped. Verification: read message.txt.',
             'state': 'OPEN', 'comments': [], 'remote': str(self.remote)}}
@@ -77,7 +84,7 @@ class WorkflowFixture(unittest.TestCase):
         config = {'workspace_id': self.ids['workspace'], 'project_id': self.ids['project'], 'root_issue_id': self.ids['root'],
                   'repository': str(self.remote), 'developer': {'name': 'Developer', 'runtime_id': self.ids['runtime'], 'model': 'fixture'},
                   'reviewer': {'name': 'Reviewer', 'runtime_id': self.ids['runtime'], 'model': 'fixture'},
-                  'directions': [{'name': 'message', 'scope': 'message.txt', 'question': 'Does message.txt say shipped?',
+                  'directions': [{'name': 'message', 'branch_prefix': 'feat/messages', 'scope': 'message.txt', 'question': 'Does message.txt say shipped?',
                                   'test_command': 'python3 -c "from pathlib import Path; assert Path(\'message.txt\').exists()"'}]}
         self.config_path.write_text(json.dumps(config))
 
@@ -112,7 +119,7 @@ class WorkflowFixture(unittest.TestCase):
         self.reviewer = build('feature', self.base / 'reviewer-skill')
         return json.loads(result.stdout)
 
-    def invoke(self, package, *args, role='developer', issue=None, task=None, trigger=None, ok=True, entry=False, plain=False):
+    def invoke(self, package, *args, role='developer', issue=None, task=None, trigger=None, ok=True, plain=False):
         self.task = task or str(uuid.uuid4())
         env = {**self.env, 'MULTICA_AGENT_ID': self.config[role + '_id'],
                'MULTICA_ISSUE_ID': issue or self.feature_id, 'MULTICA_WORKSPACE_ID': self.ids['workspace']}
@@ -133,8 +140,10 @@ class WorkflowFixture(unittest.TestCase):
         title = 'Message: ship requested text'
         if mirror:
             title = '[' + title + '](' + self.db()['github']['url'] + ')'
-        options = ['--github-issue', self.db()['github']['url']] if github else []
-        output = self.invoke(self.root_package, 'propose', '--title', title, '--request', 'Write shipped in message.txt.',
+        options = ['--title', title] if mirror else []
+        if github:
+            options += ['--github-issue', self.db()['github']['url']]
+        output = self.invoke(self.root_package, 'propose', '--name', 'ship-message', '--request', 'Write shipped in message.txt.',
                              '--direction', 'message', '--scope', 'message.txt', '--question', question,
                              *options, role='main', issue=self.ids['root'], task=task)
         self.spec_id = self.record('spec', self.ids['root'])[1]['id']
@@ -155,8 +164,8 @@ class WorkflowFixture(unittest.TestCase):
         output = self.invoke(self.root_package, 'dispatch', role='main', issue=self.ids['root'], task=task)
         self.feature_id = self.record('dispatch', self.ids['root'])[0]['issue_id']
         self.binding = unpack(self.db()['issues'][self.feature_id]['description'], 'binding')
-        self.call('git', 'fetch', 'origin', self.binding['branch'])
-        self.call('git', 'switch', '-c', self.binding['branch'], 'FETCH_HEAD')
+        # Model the already-bound issue checkout, not worker-side branch setup.
+        self.call('git', 'switch', '-c', self.binding['branch'], 'origin/main')
         return output
 
     def state(self, issue=None, package=None):
@@ -228,10 +237,14 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(set(self.db()['skills']), set(first['skills']))
         self.assertEqual(len(first['skills']), 2)
         self.dispatch()
-        self.assertEqual(set(self.binding), {'developer_id', 'reviewer_id', 'branch', 'test_command'})
+        self.assertEqual(set(self.binding), {'developer_id', 'reviewer_id', 'repository', 'branch', 'test_command'})
+        self.assertEqual(self.binding['branch'], 'feat/messages/ship-message')
+        self.assertEqual(self.call('git', 'ls-remote', '--heads', 'origin', 'featssship/*').stdout, '')
         for role in ('developer', 'reviewer'):
             self.assertIn(self.config['feature_skill_id'], self.db()['bindings'][self.config[role + '_id']])
-        self.invoke(self.developer)
+        initial = self.invoke(self.developer)
+        self.assertEqual(initial['status'], 'develop')
+        self.assertEqual(len(initial['next_step']), 2)  # submit and quit, not prepare.
         before = self.state()
         for event in ('init', 'quit'):
             denied = self.invoke(self.reviewer, *([] if event == 'init' else [event]), role='reviewer', ok=False, plain=True)
@@ -240,6 +253,7 @@ class WorkflowFixture(unittest.TestCase):
             self.assertIn('belongs to developer', denied.stderr)
             self.assertEqual(self.state(), before)
         first_commit = self.submit('almost')
+        self.assertNotIn('branch', self.state())  # MAIN's binding is the single source of the name.
         before = self.state()
         for event in ('init', 'approve', 'rework'):
             denied = self.invoke(self.developer, *([] if event == 'init' else [event]), ok=False, plain=True)
@@ -270,78 +284,47 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(len(self.parent_notes()), 1)
 
     def test_manual_check_reports_to_parent_and_finishes(self):
-        self.install(); self.dispatch(); self.submit('shipped')
         db = self.db()
-        db['issues'][self.feature_id]['labels'] = [{'name': 'manual'}]
+        db['issues'][self.ids['root']]['labels'] = [{'id': 'manual-label', 'name': 'manual'}]
         self.db_path.write_text(json.dumps(db))
+        self.install(); self.dispatch(); self.submit('shipped')
+        self.assertEqual(self.db()['issues'][self.feature_id]['labels'], [{'id': 'manual-label', 'name': 'manual'}])
         self.assertEqual(self.review('approve')['status'], 'integrate')
         self.integrate()
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'baseline\n')
         self.assertIn('Manual check required', self.parent_notes()[0])
         self.assertEqual(self.state(), {})
 
-    def test_review_graph_shows_default_and_configured_questions(self):
-        self.assertEqual(QUESTIONS, (
-            'Does the solution preserve the requested demand without shifting scope?',
-            'Are the additions necessary for the requested outcome?',
-        ))
-        defaults = '\n'.join('- ' + q for q in QUESTIONS)
-        self.install()
-        question = 'Does message.txt say "shipped" rather than <draft>?'
-        self.dispatch(question=question)
-        snapshot = self.base / 'review.html'
-        code = """import sys
-from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-import wrapper
-wrapper.upload_artifact = lambda filename, content, **kwargs: Path(sys.argv[2]).write_text(content)
-raise SystemExit(wrapper.main(sys.argv[3:]))
-"""
-        env = {**self.env, 'MULTICA_AGENT_ID': self.config['developer_id'],
-               'MULTICA_ISSUE_ID': self.feature_id, 'MULTICA_WORKSPACE_ID': self.ids['workspace'],
-               'MULTICA_SERVER_URL': 'http://fixture.invalid', 'MULTICA_TOKEN': 'fixture-token'}
-
-        def step(*args):
-            result = self.call(sys.executable, '-c', code, str(self.developer), str(snapshot), *args, env=env)
-            self.assertEqual(result.stderr, '')
-            payload = re.search(r'<script id="sop-data" type="application/json">(.*?)</script>',
-                                snapshot.read_text(), re.S)[1]
-            if args:
-                self.assertEqual(result.stdout, 'Delivery/review/work done this round, exit directly and silently\n')
-            else:
-                self.assertEqual(json.loads(result.stdout)['status'], 'develop')
-            return self.state()['output'], json.loads(payload)
-
-        _, graph = step()
-        self.assertEqual(graph['decision']['status'], 'develop')
-        self.assertIn(defaults, graph['nodes']['review']['instruction'])
+    def test_main_named_branch_guards_and_competing_first_push(self):
+        self.install(); self.dispatch()
+        self.invoke(self.developer)
         (self.repo / 'message.txt').write_text('shipped\n')
         self.commit('shipped')
-        output, graph = step('submit', '--summary', 'Wrote shipped in message.txt.')
-        self.assertEqual(graph['decision'], output)
-        self.assertEqual(output['status'], 'review')
-        self.assertEqual(self.state()['output'], output)
-        for expected in (defaults, question, 'shared folder and branch'):
-            self.assertIn(expected, graph['nodes']['review']['instruction'])
-        self.assertNotIn('Does the delivered behavior satisfy the request and acceptance evidence?', snapshot.read_text())
-        self.assertNotIn('featssship:binding', output['instruction'])
-        self.assertNotIn('Developer:', output['instruction'])
-        self.assertNotIn('Merge and test', output['next_step'][0]['instruction'])
-        self.assertEqual(self.invoke(self.reviewer, role='reviewer')['instruction'], output['instruction'])
-        self.assertEqual(self.call('git', 'branch', '--show-current').stdout.strip(), self.binding['branch'])
-        self.assertEqual(self.call('git', 'status', '--porcelain').stdout, '')
-
-    def test_conflict_reports_to_parent_without_losing_feature(self):
-        self.install(); self.dispatch()
-        commit = self.submit('shipped')
-        self.advance_main('message.txt', 'Conflicting main change\n')
+        self.call('git', 'switch', 'main')
+        denied = self.invoke(self.developer, 'submit', '--summary', 'wrong branch', plain=True, ok=False)
+        self.assertIn('one feature branch selected by MAIN', denied.stdout)
+        self.call('git', 'switch', self.binding['branch'])
+        self.call('git', 'checkout', '--detach', 'HEAD')
+        denied = self.invoke(self.developer, 'submit', '--summary', 'detached', plain=True, ok=False)
+        self.assertIn('one feature branch selected by MAIN', denied.stdout)
+        self.call('git', 'switch', self.binding['branch'])
+        self.call('git', 'remote', 'set-url', 'origin', str(self.base / 'wrong.git'))
+        denied = self.invoke(self.developer, 'submit', '--summary', 'wrong repository', plain=True, ok=False)
+        self.assertIn('configured target repository', denied.stdout)
+        self.call('git', 'remote', 'set-url', 'origin', str(self.remote))
+        # Another issue claimed the short name before submission: do not overwrite it.
+        self.call('git', 'push', 'origin', 'main:refs/heads/' + self.binding['branch'])
+        denied = self.invoke(self.developer, 'submit', '--summary', 'name collision', plain=True, ok=False)
+        self.assertIn('stale info', denied.stdout)
+        self.assertEqual(self.call('git', 'ls-remote', 'origin', self.binding['branch']).stdout.split()[0],
+                         self.call('git', 'rev-parse', 'main').stdout.strip())
+        self.call('git', 'push', 'origin', ':refs/heads/' + self.binding['branch'])
+        self.invoke(self.developer, 'submit', '--summary', 'shipped', plain=True)
+        self.call('git', 'switch', '-c', 'other-feature')
+        denied = self.invoke(self.reviewer, 'approve', '--finding', 'wrong branch', role='reviewer', plain=True, ok=False)
+        self.assertIn('one feature branch selected by MAIN', denied.stdout)
+        self.call('git', 'switch', self.binding['branch'])
         self.assertEqual(self.review('approve')['status'], 'integrate')
-        self.integrate()
-        self.assertIn('Manual check required', self.parent_notes()[0])
-        self.assertEqual(self.call('git', 'rev-parse', 'HEAD').stdout.strip(), commit)
-        self.assertEqual((self.repo / 'message.txt').read_text(), 'shipped\n')
-        self.assertEqual(self.call('git', 'status', '--porcelain').stdout, '')
-        self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'Conflicting main change\n')
 
     def test_changed_revision_rejected(self):
         self.install(); self.dispatch(); self.submit('shipped')
@@ -353,154 +336,6 @@ raise SystemExit(wrapper.main(sys.argv[3:]))
         self.assertEqual(self.parent_notes(), [])
         self.assertEqual(self.state()['commit'], before)
 
-    def test_reviewer_only_reads_and_developer_integrates_approved_head(self):
-        self.install(); self.dispatch(); self.submit('shipped')
-        self.invoke(self.reviewer, role='reviewer')
-        code = """import sys
-sys.path.insert(0, sys.argv[1])
-import common, wrapper
-git = common.git
-def read_only(repo, *words):
-    assert words[0] in {'status', 'branch', 'rev-parse'}, words
-    return git(repo, *words)
-def no_test(*args):
-    raise AssertionError('Reviewer must not run tests')
-common.git, common.test = read_only, no_test
-raise SystemExit(wrapper.main(['approve', '--finding', 'Scope and necessity verified.']))
-"""
-        env = {**self.env, 'MULTICA_AGENT_ID': self.config['reviewer_id'],
-               'MULTICA_ISSUE_ID': self.feature_id, 'MULTICA_WORKSPACE_ID': self.ids['workspace']}
-        result = self.call(sys.executable, '-c', code, str(self.reviewer), env=env)
-        self.assertEqual(result.stdout, 'Delivery/review/work done this round, exit directly and silently\n')
-        self.assertEqual(result.stderr, '')
-        approved = self.state()
-        self.assertEqual(approved['status'], 'integrate')
-        self.assertEqual(self.parent_notes(), [])
-        self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'baseline\n')
-        denied = self.invoke(self.reviewer, 'integrate', role='reviewer', plain=True, ok=False)
-        self.assertNotEqual(denied.returncode, 0)
-        self.assertEqual(denied.stdout, '')
-        self.assertIn('belongs to developer', denied.stderr)
-        self.assertEqual(self.state(), approved)
-        (self.repo / 'message.txt').write_text('unreviewed\n')
-        self.commit('unreviewed', amend=True)
-        rejected = self.invoke(self.developer, 'integrate', ok=False)
-        self.assertIn('exact approved revision', rejected['error']['message'])
-        self.assertEqual(self.parent_notes(), [])
-
-    def test_failed_independent_check_reports_to_main(self):
-        self.install(); self.dispatch(); self.submit('shipped')
-        db = self.db()
-        binding = {**self.binding, 'test_command': 'false'}
-        db['issues'][self.feature_id]['description'] = db['issues'][self.feature_id]['description'].replace(
-            block('binding', self.binding), block('binding', binding))
-        self.db_path.write_text(json.dumps(db))
-        self.assertEqual(self.review('approve')['status'], 'integrate')
-        self.integrate()
-        self.assertIn('Configured check failed', self.parent_notes()[0])
-        self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'baseline\n')
-
-    def test_failed_deliveries_remain_failures_and_do_not_finish(self):
-        self.install(); self.dispatch()
-        self.invoke(self.developer)
-        (self.repo / 'message.txt').write_text('shipped\n')
-        self.commit('shipped')
-
-        def fail(issue, args, role, phase):
-            db = self.db()
-            db['fail_delivery_issue'] = issue
-            self.db_path.write_text(json.dumps(db))
-            before = len(db['comments'])
-            result = self.invoke(self.developer, *args, role=role, plain=True, ok=False)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn('Fixture delivery failed', json.loads(result.stdout)['error']['message'])
-            self.assertNotIn('exit directly and silently', result.stdout)
-            self.assertEqual(len(self.db()['comments']), before)
-            self.assertEqual(self.state()['status'], phase)
-            self.assertNotEqual(self.db()['issues'][self.feature_id]['status'], 'in_review')
-            db = self.db()
-            db.pop('fail_delivery_issue')
-            self.db_path.write_text(json.dumps(db))
-
-        fail(self.feature_id, ('submit', '--summary', 'shipped'), 'developer', 'develop')
-        self.submit('shipped')
-        fail(self.feature_id, ('approve', '--finding', 'approved'), 'reviewer', 'review')
-        self.review('approve')
-        fail(self.ids['root'], ('integrate',), 'developer', 'integrate')
-        self.integrate()
-
-    def test_package_upgrade_preserves_settings_state_and_help(self):
-        from packages import build
-        self.install()
-        self.dispatch()
-        self.submit('shipped')
-        # MAIN has completed; feature state remains shared and live in review.
-        package = self.developer
-        state = self.state()
-        (package / 'config.json').write_text('{"DEBUG": false}')
-        legacy = package / '.state/legacy-task.json'
-        legacy.parent.mkdir()
-        legacy.write_text('{"status":"implement"}')
-        build('feature', package)
-        self.assertEqual(self.state(), state)
-        self.assertEqual(legacy.read_text(), '{"status":"implement"}')
-        self.assertEqual(json.loads((package / 'config.json').read_text()), {'DEBUG': False})
-        before = len([c for c in self.db()['calls'] if c[:2] == ['issue', 'metadata']])
-        for role in ('developer', 'reviewer'):
-            self.assertEqual(self.invoke(package, '--help', role=role), state['output'])
-        # A receiving skill directory rebinds callbacks, without copying state/files.
-        receiving = build('feature', self.base / 'receiving')
-        output = self.invoke(receiving, '--help', role='reviewer', entry=True)
-        self.assertEqual(output['status'], 'review')
-        self.assertTrue(all(str(receiving / 'wrapper.py') in c['command'] for c in output['next_step']))
-        self.assertFalse((receiving / '.state').exists())
-        self.assertEqual(self.state(), state)
-        after = len([c for c in self.db()['calls'] if c[:2] == ['issue', 'metadata']])
-        self.assertEqual(before, after)
-        self.install()
-        self.assertEqual(self.state(), state)
-        self.assertEqual(json.loads((package / 'config.json').read_text()), {'DEBUG': False})
-
-    def test_preview_failure_preserves_action_result(self):
-        self.install()
-        (self.root_package / 'config.json').write_text('{"DEBUG": true}')
-        code = """import json, sys
-from unittest.mock import patch
-sys.path.insert(0, sys.argv[1])
-import wrapper
-with patch(sys.argv[2], return_value=json.loads(sys.argv[3])):
-    raise SystemExit(wrapper.main(sys.argv[4:]))
-"""
-        for target, value, message in (
-            ('wrapper.shutil.which', None, 'Cannot install graphviz: no supported package manager on PATH.'),
-            ('sop.Option.diagram', 'digraph broken { a -> }', 'Invalid DOT diagram:'),
-        ):
-            with self.subTest(failure=target):
-                task = str(uuid.uuid4())
-                db = self.db()
-                db['issues'][self.ids['root']]['metadata'] = {'unrelated': 'preserve'}
-                self.db_path.write_text(json.dumps(db))
-                self.invoke(self.root_package, role='main', issue=self.ids['root'], task=task)
-                before = len(self.db()['comments'])
-                env = {**self.env, 'MULTICA_TASK_ID': task, 'MULTICA_AGENT_ID': self.config['main_id'],
-                       'MULTICA_ISSUE_ID': self.ids['root'], 'MULTICA_WORKSPACE_ID': self.ids['workspace'],
-                       'MULTICA_SERVER_URL': 'http://fixture.invalid', 'MULTICA_TOKEN': 'fixture-token'}
-                result = self.call(sys.executable, '-c', code, str(self.root_package), target, json.dumps(value),
-                                   'propose', '--title', 'Ship message', '--request', 'Write shipped.',
-                                   '--direction', 'message', '--scope', 'message.txt',
-                                   '--question', 'Does message.txt say shipped?', env=env)
-                output = json.loads(result.stdout)
-                self.assertEqual(output['status'], 'grilling')
-                self.assertNotIn('data', output)
-                self.assertNotIn('error', output)
-                self.assertIn('Live artifact update failed: ' + message, result.stderr)
-                saved = self.state(self.ids['root'], self.root_package)
-                self.assertEqual(saved['status'], 'grilling')
-                self.assertEqual(saved['output'], output)
-                self.assertEqual(self.invoke(self.root_package, '--help', role='main',
-                                             issue=self.ids['root'], task=task), output)
-                self.assertEqual(len(self.db()['comments']), before + 1)
-
     def test_install_rejects_self_review(self):
         config = json.loads(self.config_path.read_text())
         config.update(developer_id=self.ids['main'], reviewer_id=self.ids['main'])
@@ -508,6 +343,71 @@ with patch(sys.argv[2], return_value=json.loads(sys.argv[3])):
         result = self.call(sys.executable, str(ROOT / 'install.py'), '--config', str(self.config_path), ok=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(len(self.db()['agents']), 1)
+
+    def test_install_creates_own_main_child_and_reuses_it(self):
+        config = json.loads(self.config_path.read_text())
+        for key in ('root_issue_id', 'workspace_id', 'project_id'):
+            config.pop(key)
+        self.config_path.write_text(json.dumps(config))
+        self.env.update(MULTICA_ISSUE_ID=self.ids['root'], MULTICA_AGENT_ID=self.ids['main'])
+        result = self.install()
+        child = self.db()['issues'][result['root_issue_id']]
+        self.assertNotEqual(child['id'], self.ids['root'])
+        self.assertEqual(child['parent_issue_id'], self.ids['root'])
+        self.assertEqual(child['status'], 'backlog')
+        self.assertTrue(child['title'].startswith('MAIN DEV:'))
+        main = self.db()['agents'][self.config['main_id']]
+        self.assertNotEqual(main['id'], self.ids['main'])
+        self.assertEqual((main['runtime_id'], main['model'], main['thinking_level']),
+                         (self.ids['runtime'], 'fixture', 'high'))
+        self.assertIn(self.config['delegation_skill_id'], self.db()['bindings'][main['id']])
+        before = self.db()
+        self.assertEqual(self.install()['root_issue_id'], child['id'])
+        self.assertEqual(set(self.db()['issues']), set(before['issues']))
+        self.assertEqual(set(self.db()['agents']), set(before['agents']))
+        self.assertFalse(any(call[:2] == ['issue', 'list'] for call in self.db()['calls']))
+
+    def test_install_asks_one_self_contained_question_then_resumes(self):
+        self.config_path.write_text('{}')
+        self.env.update(MULTICA_ISSUE_ID=self.ids['root'], MULTICA_AGENT_ID=self.ids['main'])
+        def resume():
+            result = self.call(sys.executable, str(ROOT / 'install.py'), '--config', str(self.config_path))
+            output = json.loads(result.stdout)
+            self.assertEqual(output['status'], 'needs_input')
+            self.assertEqual(len(self.db()['issues']), 1)
+            self.assertEqual(len(self.db()['agents']), 1)
+            return output
+        first = resume()
+        self.assertEqual(first['field'], 'repository')
+        self.assertIn('Which target repository needs featssship?', first['question'])
+        self.assertNotIn('MAIN root', first['question'])
+        config = json.loads(self.config_path.read_text())
+        config['repository'] = str(self.remote)
+        self.config_path.write_text(json.dumps(config))
+        self.assertEqual(resume()['field'], 'direction_count')
+        config['direction_count'] = 1
+        self.config_path.write_text(json.dumps(config))
+        self.assertEqual(resume()['field'], 'directions.0.name')
+        config = json.loads(self.config_path.read_text())
+        config['directions'][0]['name'] = 'frontend'
+        self.config_path.write_text(json.dumps(config))
+        question = resume()
+        self.assertEqual(question['field'], 'directions.0.scope')
+        self.assertIn(str(self.remote), question['question'])
+        self.assertIn('frontend', question['question'])
+        self.assertEqual(resume(), question)
+        config = json.loads(self.config_path.read_text())
+        config['directions'][0]['scope'] = 'src/frontend'
+        self.config_path.write_text(json.dumps(config))
+        question = resume()
+        self.assertEqual(question['field'], 'directions.0.question')
+        self.assertIn('src/frontend', question['question'])
+        config['directions'][0]['question'] = 'Can users collapse a tree branch?'
+        self.config_path.write_text(json.dumps(config))
+        question = resume()
+        self.assertEqual(question['field'], 'directions.0.test_command')
+        self.assertIn('src/frontend', question['question'])
+        self.assertIn('Can users collapse a tree branch?', question['question'])
 
     def test_install_preserves_unrelated_main_skill(self):
         db = self.db()

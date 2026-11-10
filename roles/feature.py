@@ -2,7 +2,7 @@
 from pathlib import Path
 import subprocess
 
-from common import QUESTIONS, ROUND_DONE, clean, cli, comment, entry_command, git, has_manual, mention, test, unpack
+from common import QUESTIONS, ROUND_DONE, check_repo, clean, cli, comment, entry_command, git, has_manual, mention, test, unpack
 from sop import Completed, Option, Parameter, State, Workflow
 
 REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared folder and branch. '
@@ -38,15 +38,17 @@ def observed(context):
 def shared_repo(context):
     repo = Path.cwd()
     clean(repo)
-    if git(repo, 'branch', '--show-current') != context['binding']['branch']:
-        raise ValueError('Use the feature branch supplied by MAIN in this issue folder.')
+    check_repo(repo, context['binding'])
+    branch = git(repo, 'branch', '--show-current')
+    if branch != context['binding']['branch']:
+        raise ValueError('Use the one feature branch selected by MAIN in this issue folder.')
     return repo
 
 
 def submit(args, context):
     """```dot
-    digraph submit { node [shape=box]; check [label="Test clean feature commit"];
-        push [label="Push branch and request Reviewer"]; check -> push; }
+    digraph submit { node [shape=box]; check [label="Verify repository, MAIN branch and one feature commit"];
+        push [label="Test, push exact revision and request Reviewer"]; check -> push; }
     ```"""
     require_role(context, 'developer')
     repo, binding = shared_repo(context), context['binding']
@@ -54,7 +56,8 @@ def submit(args, context):
     if git(repo, 'rev-list', '--count', 'origin/main..HEAD') != '1':
         raise ValueError('Keep one feature commit; amend corrections before submitting.')
     test(repo, binding['test_command'])
-    git(repo, 'push', '--force-with-lease', 'origin', 'HEAD:refs/heads/' + binding['branch'])
+    ref = 'refs/heads/' + binding['branch']
+    git(repo, 'push', '--force-with-lease=' + ref + ':' + context['state'].get('commit', ''), 'origin', 'HEAD:' + ref)
     context['state'].update(commit=git(repo, 'rev-parse', 'HEAD'), summary=args.summary)
     comment(context['issue_id'], mention(binding['reviewer_id']) +
             ' TODO: Review [result](mention://issue/' + context['issue_id'] + ') at ' + context['state']['commit'] +
@@ -123,7 +126,7 @@ def integrate(args, context):
 
 
 workflow = Workflow(
-    State('develop', 'Developer: implement the issue request in the supplied branch and current folder. '
+    State('develop', 'Developer: implement the issue request on MAIN’s feature branch in the current issue folder. '
           'Keep one feature commit; amend corrections. Test and submit.', initial=True, precheck=observed,
           options=(Option('submit', 'review', 'Test, push and request independent review.', submit,
                           params=(Parameter('--summary', 'Delivered behavior and evidence'),)),)),

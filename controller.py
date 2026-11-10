@@ -2,13 +2,15 @@
 import json
 from pathlib import Path
 
-from common import QUESTIONS, block, cli, comment, entry_command, git, unpack
+from common import QUESTIONS, block, cli, comment, entry_command, feature_branch, has_manual, unpack
 from github_issue import issue_link, mirror_title
 from sop import Option, Parameter, State, Workflow
 
 ROOT = Path(__file__).resolve().parent
 SPEC_PARAMS = (
-    Parameter('--title', 'Feature/fix title'), Parameter('--request', 'Requested behavior'),
+    Parameter('--name', 'Short feature name, such as tree-horizontal-more'),
+    Parameter('--title', 'Feature/fix title; defaults to the short name', required=False),
+    Parameter('--request', 'Requested behavior'),
     Parameter('--direction', 'Configured direction name'), Parameter('--scope', 'Feature/fix scope'),
     Parameter('--question', 'Acceptance question'),
     Parameter('--test-command', 'Verification command; defaults to the configured direction', required=False),
@@ -74,10 +76,12 @@ def propose(args, context):
         _, row, _ = read_spec(context)
         return {'instruction': f'Read draft comment {row["id"]}. ' + workflow.states['grilling'].description}
     selected = direction(context['config'], args.direction)
-    spec = {key: getattr(args, key) for key in ('title', 'request', 'direction', 'scope', 'question')}
+    spec = {key: getattr(args, key) for key in ('name', 'request', 'direction', 'scope', 'question')}
+    spec['title'] = args.title or args.name
+    spec['branch'] = feature_branch(selected, args.name)
     spec['test_command'] = args.test_command or selected['test_command']
     spec['questions'] = list(QUESTIONS)
-    url = issue_link(args.title, args.github_issue)
+    url = issue_link(spec['title'], args.github_issue)
     if url:
         spec['github_issue'] = url
     return publish_spec(context, spec)
@@ -109,7 +113,8 @@ def edit(args, context):
         raise ValueError('The edited field must not be blank.')
     spec, _, _ = read_spec(context)
     spec.update(patch)
-    direction(context['config'], spec['direction'])
+    selected = direction(context['config'], spec['direction'])
+    spec['branch'] = feature_branch(selected, spec['name'])
     url = issue_link(spec['title'], spec.get('github_issue'))
     if url:
         spec['github_issue'] = url
@@ -135,7 +140,8 @@ def dispatch(args, context):
     ```"""
     config = context['config']
     request, spec_row, rows = read_spec(context)
-    direction(config, request['direction'])
+    selected = direction(config, request['direction'])
+    request['branch'] = feature_branch(selected, request['name'])
     # The issue metadata checkpoint survives agent/task changes.
     owned = context['state'].setdefault('dispatch', {})
     if owned.get('spec_id', spec_row['id']) != spec_row['id']:
@@ -156,11 +162,12 @@ def dispatch(args, context):
                     '--project', config['project_id'], '--assignee-id', config['developer_id'], '--status', 'backlog', input=binding['request'])
         owned.update(issue_id=child['id'], spec_id=spec_row['id'])
         context['save_state']()
-    binding.update(issue_id=owned['issue_id'], branch='featssship/' + owned['issue_id'])
-    repo = Path.cwd()
-    if not git(repo, 'ls-remote', '--heads', 'origin', binding['branch']):
-        git(repo, 'fetch', 'origin', 'main')
-        git(repo, 'push', 'origin', 'origin/main:refs/heads/' + binding['branch'])
+    binding['issue_id'] = owned['issue_id']
+    parent = cli('issue', 'get', context['issue_id'])
+    child = cli('issue', 'get', binding['issue_id'])
+    if has_manual(parent) and not has_manual(child):
+        label = next(label for label in parent['labels'] if label['name'] == 'manual')
+        cli('issue', 'label', 'add', child['id'], label['id'])
     if 'main_thread_id' not in owned:
         row = comment(context['issue_id'], block('dispatch', {'spec_id': spec_row['id'],
                       'issue_id': binding['issue_id']}),
@@ -169,8 +176,10 @@ def dispatch(args, context):
         context['save_state']()
     description = (binding['request'] + '\n\nScope: ' + binding['scope'] + '\n\nAcceptance: ' + binding['question'] +
                    '\n\n' + '\n'.join('- ' + q for q in binding['questions']) + '\n\n' + entry_command('multica-featssship-develop-review') +
-                   '\n\nMAIN supplies branch: ' + binding['branch'] + '. Both roles use this issue’s shared folder and branch.\n\n' +
-                   block('binding', {key: config[key] for key in ('developer_id', 'reviewer_id')} |
+                   '\n\nMAIN selected branch: ' + binding['branch'] + '. Developer and Reviewer use this existing branch '
+                   'in the shared issue folder from the start; '
+                   'do not create a review checkout or switch branches.\n\n' +
+                   block('binding', {key: config[key] for key in ('developer_id', 'reviewer_id', 'repository')} |
                          {key: binding[key] for key in ('branch', 'test_command')}))
     cli('issue', 'update', binding['issue_id'], '--description-stdin', '--no-start', input=description)
     child = cli('issue', 'get', binding['issue_id'])
@@ -194,7 +203,7 @@ workflow = Workflow(
         Option('edit', 'grilling', 'After the human answers one question, patch one point using one optional flag: '
                + ', '.join(param.flag for param in EDIT_PARAMS), edit,
                params=EDIT_PARAMS),
-        Option('dispatch', 'finished', 'Delegate the draft and prepare the feature resources.', dispatch),
+        Option('dispatch', 'finished', 'Delegate the draft with its configured feature binding.', dispatch),
     )),
     State('finished', 'MAIN waits for one verified result from the feature issue.', final=True),
     params=(Parameter('--thread', 'Native MAIN trigger comment UUID', required=False),
