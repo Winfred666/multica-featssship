@@ -9,6 +9,8 @@ QUESTIONS = (
     'Does the solution preserve the requested demand without shifting scope?',
     'Are the additions necessary for the requested outcome?',
 )
+# TODO: Runtime-enforced completion belongs to https://github.com/Winfred666/multica-RSI/issues/40.
+ROUND_DONE = 'Delivery/review/work done this round, exit directly and silently'
 
 
 def run(*words, cwd=None, input=None):
@@ -46,8 +48,10 @@ def comment(issue_id, content, parent=None, *, steer_agent=None):
         words += ['--parent', parent]
     if steer_agent:
         for row in cli('issue', 'runs', issue_id, '--active'):
-            if row['agent_id'] == steer_agent and row['status'] == 'running':
+            if (row['agent_id'] == steer_agent and row['status'] == 'running'
+                    and row.get('can_supplement') is True):
                 words += ['--steer', row['id']]
+                break
     return cli(*words, input=content)
 
 

@@ -84,6 +84,8 @@ def main():
     elif args[:2] == ['issue', 'runs']:
         result = [row for row in db.get('runs', []) if row['issue_id'] == args[2]]
     elif args[:3] == ['issue', 'comment', 'add']:
+        if args[3] == db.get('fail_delivery_issue'):
+            raise ValueError('Fixture delivery failed')
         parent = option('parent')
         if os.environ.get('FEATSSSHIP_TRIGGER') and args[3] == os.environ['MULTICA_ISSUE_ID']:
             if parent != os.environ['FEATSSSHIP_TRIGGER']:

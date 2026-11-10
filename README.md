@@ -62,8 +62,14 @@ Reviewer only reads and returns approval or corrections; no source writes, tests
 merge or push. Approval hands the approved revision back to Developer for tests,
 integration and reporting. A manual label, merge conflict or failed check sends
 MAIN a note and finishes. Wrong-role action calls reject on stderr without JSON or state
-changes. Handoffs return only a plain stop message to the sender, not the next
-role's JSON guidance. The receiving agent reads its own guidance on entry.
+changes. Each successful submit, verdict or parent report posts one recipient
+TODO with a result link. Only a matching running recipient with
+`can_supplement: true` is steered; otherwise the mention takes the normal route.
+The sender receives only: `Delivery/review/work done this round, exit directly and silently`.
+Already-reported calls return the same sentence without another delivery.
+Receiver callbacks stay out of the sender response; failures remain errors.
+This is SOP guidance, not runner-enforced completion or measured token savings.
+Runtime enforcement is tracked in [multica-RSI#40](https://github.com/Winfred666/multica-RSI/issues/40).
 
 MAIN creates the remote feature branch before dispatch. The issue checkout must
 already use that branch. Checkout provisioning belongs to installation/platform

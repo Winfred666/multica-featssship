@@ -24,9 +24,15 @@ or failed integration is reported to the parent; the child workflow finishes.
 Human acceptance owns done.
 
 Reviewer only reads and returns a verdict. Developer owns all tests and Git
-writes. Approval hands integration back to Developer. Each sender receives only
-a plain stop message, while metadata and HTML retain the receiving role's
-guidance. Wrong-role action calls exit nonzero on stderr without JSON or writes.
+writes. Approval hands integration back to Developer. Each successful delivery
+posts one recipient TODO with a result link. Steering requires a matching running
+recipient with `can_supplement: true`; otherwise the mention takes the normal route.
+The sender receives only "Delivery/review/work done this round, exit directly and
+silently", including integration and already-reported calls. Metadata and HTML
+retain the receiving role's guidance. Failures remain errors. This is guidance,
+not enforced turn completion or a measured token saving; enforcement belongs to
+the runner ([multica-RSI#40](https://github.com/Winfred666/multica-RSI/issues/40)).
+Wrong-role action calls exit nonzero on stderr without JSON or writes.
 
 Select `review` in the HTML graph to see the two default questions from
 [`common.QUESTIONS`](../common.py). A running review also shows the issue's

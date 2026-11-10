@@ -2,7 +2,7 @@
 from pathlib import Path
 import subprocess
 
-from common import QUESTIONS, clean, cli, comment, entry_command, git, has_manual, mention, test, unpack
+from common import QUESTIONS, ROUND_DONE, clean, cli, comment, entry_command, git, has_manual, mention, test, unpack
 from sop import Completed, Option, Parameter, State, Workflow
 
 REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared folder and branch. '
@@ -31,7 +31,8 @@ def observed(context):
     if 'result' not in context:
         require_role(context, role)
     if issue['status'] in ('done', 'cancelled', 'in_review'):
-        raise Completed('Already reported to MAIN; end this turn.')
+        context['handoff'] = ROUND_DONE
+        raise Completed(ROUND_DONE)
 
 
 def shared_repo(context):
@@ -55,10 +56,11 @@ def submit(args, context):
     test(repo, binding['test_command'])
     git(repo, 'push', '--force-with-lease', 'origin', 'HEAD:refs/heads/' + binding['branch'])
     context['state'].update(commit=git(repo, 'rev-parse', 'HEAD'), summary=args.summary)
-    comment(context['issue_id'], mention(binding['reviewer_id']) + ' Review ' + context['state']['commit'] +
+    comment(context['issue_id'], mention(binding['reviewer_id']) +
+            ' TODO: Review [result](mention://issue/' + context['issue_id'] + ') at ' + context['state']['commit'] +
             ': ' + args.summary + '\n\n' + entry_command('multica-featssship-develop-review'),
             getattr(args, 'thread', None), steer_agent=binding['reviewer_id'])
-    context['handoff'] = 'Submitted to Reviewer; end this turn.'
+    context['handoff'] = ROUND_DONE
 
 
 def verdict(args, context):
@@ -76,11 +78,12 @@ def verdict(args, context):
     approved = args.event == 'approve'
     if approved:
         state['finding'] = args.finding
-    comment(context['issue_id'], mention(binding['developer_id']) +
-            (' Approved ' + commit + '. Integrate and report to MAIN.\n' if approved else ' Rework required.\n') +
+    comment(context['issue_id'], mention(binding['developer_id']) + ' TODO: ' +
+            ('Integrate approved ' if approved else 'Correct ') +
+            '[result](mention://issue/' + context['issue_id'] + ') at ' + commit + '.\n' +
             args.finding + '\n\n' + entry_command('multica-featssship-develop-review'),
             getattr(args, 'thread', None), steer_agent=binding['developer_id'])
-    context['handoff'] = 'Verdict sent to Developer; end this turn.'
+    context['handoff'] = ROUND_DONE
 
 
 def integrate(args, context):
@@ -111,9 +114,11 @@ def integrate(args, context):
             note = 'Manual check required for ' + commit + ': ' + str(error)
     parent = context['issue']['parent_issue_id']
     main = cli('issue', 'get', parent)
-    comment(parent, mention(main['assignee_id']) + ' [Feature](mention://issue/' + context['issue_id'] + ')\n\n' + note,
+    comment(parent, mention(main['assignee_id']) +
+            ' TODO: Review the [Feature](mention://issue/' + context['issue_id'] + ') result.\n\n' + note,
             steer_agent=main['assignee_id'])
     cli('issue', 'status', context['issue_id'], 'in_review')
+    context['handoff'] = ROUND_DONE
     return {'instruction': note + '\nReported to MAIN; end this turn.'}
 
 

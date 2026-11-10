@@ -18,8 +18,13 @@ Approval returns integration to Developer. Developer verifies the approved HEAD,
 tests, integrates and reports to MAIN. A manual label, conflict or failed
 integration sends a note to MAIN and finishes.
 
-Handoffs return a plain stop message to the sender, not the next role's guidance.
-End the turn. Wrong-role calls exit nonzero on stderr with no JSON or state write.
+Successful submit, verdict and parent reporting post one recipient TODO with a
+result link, then return only "Delivery/review/work done this round, exit directly
+and silently". Exit without commentary or another action. Already-reported calls
+return the same instruction without another delivery. Receiver callbacks are not
+sender instructions. This is guidance, not a runner-enforced stop. Failed
+delivery remains an error. Wrong-role calls exit nonzero on stderr with no JSON
+or state write.
 
 Both roles share one issue metadata record. `--help` reads guidance without
 advancing. Follow returned errors; reconcile writes before retrying. Use a

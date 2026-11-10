@@ -7,11 +7,32 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from common import QUESTIONS, block, unpack
+from common import QUESTIONS, block, comment, unpack
+
+
+class DeliveryRoutingTests(unittest.TestCase):
+    def test_steer_only_one_matching_supplementable_running_recipient(self):
+        eligible = {'id': 'ready', 'agent_id': 'recipient', 'status': 'running', 'can_supplement': True}
+        for rows, expected in (
+            ([], None),
+            ([{**eligible, 'can_supplement': False}], None),
+            ([{k: v for k, v in eligible.items() if k != 'can_supplement'}], None),
+            ([{**eligible, 'status': 'completed'}], None),
+            ([{**eligible, 'agent_id': 'other'}], None),
+            ([{**eligible, 'agent_id': 'other'}, eligible, {**eligible, 'id': 'second'}], 'ready'),
+        ):
+            with self.subTest(runs=rows), patch('common.cli', side_effect=[rows, {'id': 'posted'}]) as cli:
+                self.assertEqual(comment('issue', 'recipient TODO', steer_agent='recipient'), {'id': 'posted'})
+                self.assertEqual(cli.call_count, 2)
+                words = cli.call_args.args
+                self.assertEqual(words.count('--steer'), 1 if expected else 0)
+                if expected:
+                    self.assertEqual(words[-2:], ('--steer', expected))
 
 
 class WorkflowFixture(unittest.TestCase):
@@ -148,23 +169,42 @@ class WorkflowFixture(unittest.TestCase):
         self.invoke(self.developer)
         (self.repo / 'message.txt').write_text(text + '\n')
         commit = self.commit(text, amend=bool(self.state().get('commit')))
+        before = len(self.db()['comments'])
         result = self.invoke(self.developer, 'submit', '--summary', 'Updated message.txt: ' + text, plain=True)
-        self.assertEqual(result.stdout, 'Submitted to Reviewer; end this turn.\n')
+        self.assertEqual(result.stdout, 'Delivery/review/work done this round, exit directly and silently\n')
         self.assertEqual(result.stderr, '')
+        self.assert_delivery(before, self.config['reviewer_id'], self.feature_id)
         return commit
 
     def review(self, verdict):
         self.invoke(self.reviewer, role='reviewer')
+        before = len(self.db()['comments'])
         result = self.invoke(self.reviewer, verdict, '--finding',
                            'Acceptance, necessary additions and scope verified.' if verdict == 'approve' else
                            'Replace almost with shipped.', role='reviewer', plain=True)
-        self.assertEqual(result.stdout, 'Verdict sent to Developer; end this turn.\n')
+        self.assertEqual(result.stdout, 'Delivery/review/work done this round, exit directly and silently\n')
         self.assertEqual(result.stderr, '')
+        self.assert_delivery(before, self.config['developer_id'], self.feature_id)
         return self.state()['output']
 
     def integrate(self):
         self.invoke(self.developer)
-        return self.invoke(self.developer, 'integrate')
+        before = len(self.db()['comments'])
+        result = self.invoke(self.developer, 'integrate', plain=True)
+        self.assertEqual(result.stdout, 'Delivery/review/work done this round, exit directly and silently\n')
+        self.assertEqual(result.stderr, '')
+        self.assertEqual(self.state(), {})
+        self.assert_delivery(before, self.config['main_id'], self.ids['root'])
+
+    def assert_delivery(self, before, recipient, issue):
+        rows = self.db()['comments'][before:]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['issue_id'], issue)
+        body = rows[0]['content']
+        self.assertIn('mention://agent/' + recipient, body)
+        self.assertEqual(body.count('mention://agent/'), 1)
+        self.assertEqual(body.count('TODO:'), 1)
+        self.assertIn('mention://issue/' + self.feature_id, body)
 
     def parent_notes(self):
         return [r['content'] for r in self.db()['comments']
@@ -214,7 +254,7 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(self.review('approve')['status'], 'integrate')
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'baseline\n')
         self.assertEqual(self.parent_notes(), [])
-        self.assertEqual(self.integrate()['status'], 'finished')
+        self.integrate()
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'shipped\n')
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:other.txt').stdout, 'Concurrent safe change\n')
         self.assertEqual(len(self.parent_notes()), 1)
@@ -225,7 +265,8 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(len(self.call('git', 'worktree', 'list', '--porcelain').stdout.split('worktree ')), 2)
         self.assertEqual(self.call('git', 'branch', '--show-current').stdout.strip(), self.binding['branch'])
         self.assertLessEqual(self.db()['peak_metadata_bytes'], 8192)
-        self.assertEqual(self.invoke(self.developer)['status'], 'finished')
+        self.assertEqual(self.invoke(self.developer, plain=True).stdout,
+                         'Delivery/review/work done this round, exit directly and silently\n')
         self.assertEqual(len(self.parent_notes()), 1)
 
     def test_manual_check_reports_to_parent_and_finishes(self):
@@ -234,7 +275,7 @@ class WorkflowFixture(unittest.TestCase):
         db['issues'][self.feature_id]['labels'] = [{'name': 'manual'}]
         self.db_path.write_text(json.dumps(db))
         self.assertEqual(self.review('approve')['status'], 'integrate')
-        self.assertEqual(self.integrate()['status'], 'finished')
+        self.integrate()
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'baseline\n')
         self.assertIn('Manual check required', self.parent_notes()[0])
         self.assertEqual(self.state(), {})
@@ -266,7 +307,7 @@ raise SystemExit(wrapper.main(sys.argv[3:]))
             payload = re.search(r'<script id="sop-data" type="application/json">(.*?)</script>',
                                 snapshot.read_text(), re.S)[1]
             if args:
-                self.assertEqual(result.stdout, 'Submitted to Reviewer; end this turn.\n')
+                self.assertEqual(result.stdout, 'Delivery/review/work done this round, exit directly and silently\n')
             else:
                 self.assertEqual(json.loads(result.stdout)['status'], 'develop')
             return self.state()['output'], json.loads(payload)
@@ -295,7 +336,7 @@ raise SystemExit(wrapper.main(sys.argv[3:]))
         commit = self.submit('shipped')
         self.advance_main('message.txt', 'Conflicting main change\n')
         self.assertEqual(self.review('approve')['status'], 'integrate')
-        self.assertEqual(self.integrate()['status'], 'finished')
+        self.integrate()
         self.assertIn('Manual check required', self.parent_notes()[0])
         self.assertEqual(self.call('git', 'rev-parse', 'HEAD').stdout.strip(), commit)
         self.assertEqual((self.repo / 'message.txt').read_text(), 'shipped\n')
@@ -330,7 +371,7 @@ raise SystemExit(wrapper.main(['approve', '--finding', 'Scope and necessity veri
         env = {**self.env, 'MULTICA_AGENT_ID': self.config['reviewer_id'],
                'MULTICA_ISSUE_ID': self.feature_id, 'MULTICA_WORKSPACE_ID': self.ids['workspace']}
         result = self.call(sys.executable, '-c', code, str(self.reviewer), env=env)
-        self.assertEqual(result.stdout, 'Verdict sent to Developer; end this turn.\n')
+        self.assertEqual(result.stdout, 'Delivery/review/work done this round, exit directly and silently\n')
         self.assertEqual(result.stderr, '')
         approved = self.state()
         self.assertEqual(approved['status'], 'integrate')
@@ -355,9 +396,38 @@ raise SystemExit(wrapper.main(['approve', '--finding', 'Scope and necessity veri
             block('binding', self.binding), block('binding', binding))
         self.db_path.write_text(json.dumps(db))
         self.assertEqual(self.review('approve')['status'], 'integrate')
-        self.assertEqual(self.integrate()['status'], 'finished')
+        self.integrate()
         self.assertIn('Configured check failed', self.parent_notes()[0])
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'baseline\n')
+
+    def test_failed_deliveries_remain_failures_and_do_not_finish(self):
+        self.install(); self.dispatch()
+        self.invoke(self.developer)
+        (self.repo / 'message.txt').write_text('shipped\n')
+        self.commit('shipped')
+
+        def fail(issue, args, role, phase):
+            db = self.db()
+            db['fail_delivery_issue'] = issue
+            self.db_path.write_text(json.dumps(db))
+            before = len(db['comments'])
+            result = self.invoke(self.developer, *args, role=role, plain=True, ok=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Fixture delivery failed', json.loads(result.stdout)['error']['message'])
+            self.assertNotIn('exit directly and silently', result.stdout)
+            self.assertEqual(len(self.db()['comments']), before)
+            self.assertEqual(self.state()['status'], phase)
+            self.assertNotEqual(self.db()['issues'][self.feature_id]['status'], 'in_review')
+            db = self.db()
+            db.pop('fail_delivery_issue')
+            self.db_path.write_text(json.dumps(db))
+
+        fail(self.feature_id, ('submit', '--summary', 'shipped'), 'developer', 'develop')
+        self.submit('shipped')
+        fail(self.feature_id, ('approve', '--finding', 'approved'), 'reviewer', 'review')
+        self.review('approve')
+        fail(self.ids['root'], ('integrate',), 'developer', 'integrate')
+        self.integrate()
 
     def test_package_upgrade_preserves_settings_state_and_help(self):
         from packages import build
