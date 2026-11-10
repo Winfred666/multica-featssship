@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -10,7 +11,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from common import block, unpack
+from common import QUESTIONS, block, unpack
 
 
 class WorkflowFixture(unittest.TestCase):
@@ -103,7 +104,7 @@ class WorkflowFixture(unittest.TestCase):
             self.assertNotIn('error', output, output)
         return output
 
-    def propose(self, *, github=False, mirror=False):
+    def propose(self, *, github=False, mirror=False, question='Does message.txt say shipped?'):
         task = str(uuid.uuid4())
         self.invoke(self.root_package, role='main', issue=self.ids['root'], task=task)
         title = 'Message: ship requested text'
@@ -111,7 +112,7 @@ class WorkflowFixture(unittest.TestCase):
             title = '[' + title + '](' + self.db()['github']['url'] + ')'
         options = ['--github-issue', self.db()['github']['url']] if github else []
         output = self.invoke(self.root_package, 'propose', '--title', title, '--request', 'Write shipped in message.txt.',
-                             '--direction', 'message', '--scope', 'message.txt', '--question', 'Does message.txt say shipped?',
+                             '--direction', 'message', '--scope', 'message.txt', '--question', question,
                              *options, role='main', issue=self.ids['root'], task=task)
         self.spec_id = self.record('spec', self.ids['root'])[1]['id']
         return task
@@ -126,8 +127,8 @@ class WorkflowFixture(unittest.TestCase):
         self.db_path.write_text(json.dumps(db))
         return reply['id']
 
-    def dispatch(self, *, github=False, mirror=False):
-        task = self.propose(github=github, mirror=mirror)
+    def dispatch(self, *, github=False, mirror=False, question='Does message.txt say shipped?'):
+        task = self.propose(github=github, mirror=mirror, question=question)
         output = self.invoke(self.root_package, 'dispatch', role='main', issue=self.ids['root'], task=task)
         self.feature_id = self.record('dispatch', self.ids['root'])[0]['issue_id']
         self.binding = unpack(self.db()['issues'][self.feature_id]['description'], 'binding')
@@ -203,6 +204,7 @@ class WorkflowFixture(unittest.TestCase):
         self.assertNotIn('sop.' + self.root_package.name, self.db()['issues'][self.ids['root']]['metadata'])
         self.assertEqual(self.db()['issues'][self.ids['root']]['metadata']['unrelated'], 'preserve')
         self.assertEqual(len(self.call('git', 'worktree', 'list', '--porcelain').stdout.split('worktree ')), 2)
+        self.assertEqual(self.call('git', 'branch', '--show-current').stdout.strip(), self.binding['branch'])
         self.assertLessEqual(self.db()['peak_metadata_bytes'], 8192)
         self.assertEqual(self.invoke(self.developer)['status'], 'finished')
         self.assertEqual(len(self.parent_notes()), 1)
@@ -216,6 +218,51 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'baseline\n')
         self.assertIn('Manual check required', self.parent_notes()[0])
         self.assertEqual(self.state(), {})
+
+    def test_review_graph_shows_default_and_configured_questions(self):
+        self.assertEqual(QUESTIONS, (
+            'Does the solution preserve the requested demand without shifting scope?',
+            'Are the additions necessary for the requested outcome?',
+        ))
+        defaults = '\n'.join('- ' + q for q in QUESTIONS)
+        self.install()
+        question = 'Does message.txt say "shipped" rather than <draft>?'
+        self.dispatch(question=question)
+        snapshot = self.base / 'review.html'
+        code = """import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import wrapper
+wrapper.upload_artifact = lambda filename, content, **kwargs: Path(sys.argv[2]).write_text(content)
+raise SystemExit(wrapper.main(sys.argv[3:]))
+"""
+        env = {**self.env, 'MULTICA_AGENT_ID': self.config['developer_id'],
+               'MULTICA_ISSUE_ID': self.feature_id, 'MULTICA_WORKSPACE_ID': self.ids['workspace'],
+               'MULTICA_SERVER_URL': 'http://fixture.invalid', 'MULTICA_TOKEN': 'fixture-token'}
+
+        def step(*args):
+            result = self.call(sys.executable, '-c', code, str(self.developer), str(snapshot), *args, env=env)
+            self.assertEqual(result.stderr, '')
+            payload = re.search(r'<script id="sop-data" type="application/json">(.*?)</script>',
+                                snapshot.read_text(), re.S)[1]
+            return json.loads(result.stdout), json.loads(payload)
+
+        _, graph = step()
+        self.assertEqual(graph['decision']['status'], 'develop')
+        self.assertIn(defaults, graph['nodes']['review']['instruction'])
+        (self.repo / 'message.txt').write_text('shipped\n')
+        self.commit('shipped')
+        output, graph = step('submit', '--summary', 'Wrote shipped in message.txt.')
+        self.assertEqual(graph['decision'], output)
+        self.assertEqual(output['status'], 'review')
+        self.assertEqual(self.state()['output'], output)
+        for expected in (defaults, question, 'shared folder and branch'):
+            self.assertIn(expected, graph['nodes']['review']['instruction'])
+        self.assertNotIn('Does the delivered behavior satisfy the request and acceptance evidence?', snapshot.read_text())
+        self.assertNotIn('featssship:binding', output['instruction'])
+        self.assertEqual(self.invoke(self.reviewer, role='reviewer')['instruction'], output['instruction'])
+        self.assertEqual(self.call('git', 'branch', '--show-current').stdout.strip(), self.binding['branch'])
+        self.assertEqual(self.call('git', 'status', '--porcelain').stdout, '')
 
     def test_conflict_reports_to_parent_without_losing_feature(self):
         self.install(); self.dispatch()
@@ -242,7 +289,8 @@ class WorkflowFixture(unittest.TestCase):
         self.install(); self.dispatch(); self.submit('shipped')
         db = self.db()
         binding = {**self.binding, 'test_command': 'false'}
-        db['issues'][self.feature_id]['description'] = block('binding', binding)
+        db['issues'][self.feature_id]['description'] = db['issues'][self.feature_id]['description'].replace(
+            block('binding', self.binding), block('binding', binding))
         self.db_path.write_text(json.dumps(db))
         self.assertEqual(self.review('approve')['status'], 'finished')
         self.assertIn('Configured check failed', self.parent_notes()[0])

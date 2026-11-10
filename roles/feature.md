@@ -6,10 +6,14 @@ description: One issue workflow shared by Developer and Reviewer; develop, revie
 Use the issue's current folder and feature branch supplied by MAIN. Read its
 request, scope and acceptance question. Run `python3 <this-skill-directory>/wrapper.py`.
 Pass `--thread <trigger UUID>` on comment-triggered calls.
+Both agents use that same folder and branch; do not create a review checkout or
+switch branches. The verdict checks the shared tree and submitted HEAD in place.
 
 Developer implements one feature commit, amends corrections, tests and submits.
 Reviewer inspects the exact submitted diff without editing code. Answer the
-acceptance question and assess necessity and scope in `--finding`. Return
+acceptance question and both default review questions together in one `--finding`. The
+HTML review node shows the defaults; live review guidance also shows the issue's
+request, scope and configured acceptance question. Return
 corrections, or approve to merge and test. A manual label, conflict or failed
 integration sends a note to MAIN and finishes. End the turn after a handoff.
 The script rejects the wrong native agent ID for the current phase.

@@ -1,9 +1,20 @@
-"""Develop and review in the issue's supplied checkout; merge or report to MAIN."""
+"""Develop and review in the issue's shared folder and branch; report to MAIN."""
 from pathlib import Path
 import subprocess
 
-from common import clean, cli, comment, entry_command, git, has_manual, mention, test, unpack
+from common import QUESTIONS, clean, cli, comment, entry_command, git, has_manual, mention, test, unpack
 from sop import Completed, Option, Parameter, State, Workflow
+
+REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared folder and branch. '
+                 'Do not create a checkout, switch branches or edit source. Answer the acceptance and '
+                 'review questions in --finding. Approve to merge or return concrete corrections. '
+                 'Developer: end this turn after submitting.')
+
+
+def review_view(context):
+    # The issue owns the request and review criteria; omit only the runtime instructions/binding.
+    request = context['issue']['description'].rsplit('\n\n' + entry_command('multica-featssship-develop-review'), 1)[0]
+    return {'instruction': REVIEW_PROMPT + '\n\n' + request}
 
 
 def observed(context):
@@ -20,7 +31,7 @@ def observed(context):
     context.update(issue=issue, binding=binding)
 
 
-def checkout(context):
+def shared_repo(context):
     repo = Path.cwd()
     clean(repo)
     if git(repo, 'branch', '--show-current') != context['binding']['branch']:
@@ -33,7 +44,7 @@ def submit(args, context):
     digraph submit { node [shape=box]; check [label="Test clean feature commit"];
         push [label="Push branch and request Reviewer"]; check -> push; }
     ```"""
-    repo, binding = checkout(context), context['binding']
+    repo, binding = shared_repo(context), context['binding']
     git(repo, 'fetch', 'origin', 'main')
     if git(repo, 'rev-list', '--count', 'origin/main..HEAD') != '1':
         raise ValueError('Keep one feature commit; amend corrections before submitting.')
@@ -43,21 +54,18 @@ def submit(args, context):
     comment(context['issue_id'], mention(binding['reviewer_id']) + ' Review ' + context['state']['commit'] +
             ': ' + args.summary + '\n\n' + entry_command('multica-featssship-develop-review'),
             getattr(args, 'thread', None), steer_agent=binding['reviewer_id'])
-    return {'instruction': 'Reviewer: inspect the submitted diff, answer the issue acceptance question, '
-            'check that additions are necessary and scope is preserved. Approve or return findings. '
-            'Developer: end this turn.'}
 
 
 def verdict(args, context):
     """```dot
-    digraph verdict { node [shape=box]; inspect [label="Check submitted revision"];
+    digraph verdict { node [shape=box]; inspect [label="Check shared tree and submitted HEAD"];
         rework [label="Return findings to Developer"]; manual [shape=diamond, label="Manual check?"];
         merge [label="Merge main and test"];
         report [label="Push main or send MAIN a manual-check note"];
         inspect -> rework [label="rework"]; inspect -> manual [label="approve"];
         manual -> report [label="yes"]; manual -> merge [label="no"]; merge -> report; }
     ```"""
-    repo, binding, state = checkout(context), context['binding'], context['state']
+    repo, binding, state = shared_repo(context), context['binding'], context['state']
     commit = state['commit']
     if git(repo, 'rev-parse', 'HEAD') != commit:
         raise ValueError('Review the exact submitted revision; changed code needs a new submission.')
@@ -93,9 +101,9 @@ workflow = Workflow(
           'Keep one feature commit; amend corrections. Test and submit.', initial=True, precheck=observed,
           options=(Option('submit', 'review', 'Test, push and request independent review.', submit,
                           params=(Parameter('--summary', 'Delivered behavior and evidence'),)),)),
-    State('review', 'Reviewer: inspect the exact submitted diff without editing source. Answer the acceptance '
-          'question and assess necessity and scope. Approve to merge or return concrete corrections.',
-          precheck=observed, options=(
+    State('review', REVIEW_PROMPT + '\n\nDefault review questions:\n' + '\n'.join('- ' + q for q in QUESTIONS) +
+          '\n\nAlso answer the feature-specific Acceptance question from this issue.',
+          precheck=observed, view=review_view, options=(
               Option('approve', 'finished', 'Merge and test, or report manual handling to MAIN.', verdict,
                      params=(Parameter('--finding', 'Acceptance answer and review evidence'),)),
               Option('rework', 'develop', 'Send corrections to Developer.', verdict,

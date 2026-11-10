@@ -169,7 +169,7 @@ def dispatch(args, context):
         context['save_state']()
     description = (binding['request'] + '\n\nScope: ' + binding['scope'] + '\n\nAcceptance: ' + binding['question'] +
                    '\n\n' + '\n'.join('- ' + q for q in binding['questions']) + '\n\n' + entry_command('multica-featssship-develop-review') +
-                   '\n\nMAIN supplies branch: ' + binding['branch'] + '. Run in this issue’s prepared checkout.\n\n' +
+                   '\n\nMAIN supplies branch: ' + binding['branch'] + '. Both roles use this issue’s shared folder and branch.\n\n' +
                    block('binding', {key: config[key] for key in ('developer_id', 'reviewer_id')} |
                          {key: binding[key] for key in ('branch', 'test_command')}))
     cli('issue', 'update', binding['issue_id'], '--description-stdin', '--no-start', input=description)

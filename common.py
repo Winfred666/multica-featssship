@@ -6,9 +6,8 @@ import subprocess
 import tempfile
 
 QUESTIONS = (
-    'Does the delivered behavior satisfy the request and acceptance evidence?',
-    'Are the additions necessary for the requested outcome?',
     'Does the solution preserve the requested demand without shifting scope?',
+    'Are the additions necessary for the requested outcome?',
 )
 
 
@@ -66,7 +65,7 @@ def git(repo, *words):
 
 def clean(repo):
     if git(repo, 'status', '--porcelain'):
-        raise ValueError('Commit or preserve the checkout changes before this action.')
+        raise ValueError('Commit or preserve working-tree changes before this action.')
 
 
 def check_repo(repo, binding):
