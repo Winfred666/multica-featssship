@@ -10,7 +10,7 @@ The first assigned prototype issue is explicitly authorized to develop and commi
 
 Installation is a one-time README-guided script. Root delegation is the only root SOP; Developer and Reviewer share one fixed feature skill; acceptance questions come from their issue. Use standalone repository-owned procedures and native Multica CLI actions. The product must not invoke system distribution, review or delivery SOP skills.
 
-Developer and Reviewer have distinct native identities and separate contexts. Keep source edits with Developer, acceptance with Reviewer, and approved integration with Reviewer. MAIN drafts the delegation, uses grilling to resolve one point per human question and edit, then dispatches directly and receives results. Preserve the original request, acceptance question, minimum review questions and review/rework loop.
+Developer and Reviewer have distinct native identities and separate contexts. Keep source edits, tests and approved integration with Developer. Reviewer only reads and returns approval or corrections. MAIN drafts the delegation, uses grilling to resolve one point per human question and edit, then dispatches directly and receives results. Preserve the original request, acceptance question, minimum review questions and review/rework loop.
 
 Use `Workflow`, `State`, `Option` and declared prechecks from the current template. Each feature issue owns one SoP metadata record shared by both agents. Reject the wrong agent ID for the current phase. Let the platform own the issue folder and serialization; store no folder mapping or task ID. Publish findings, verdicts and delivery evidence as comments.
 

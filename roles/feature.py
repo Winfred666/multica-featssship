@@ -6,15 +6,19 @@ from common import QUESTIONS, clean, cli, comment, entry_command, git, has_manua
 from sop import Completed, Option, Parameter, State, Workflow
 
 REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared folder and branch. '
-                 'Do not create a checkout, switch branches or edit source. Answer the acceptance and '
-                 'review questions in --finding. Approve to merge or return concrete corrections. '
-                 'Developer: end this turn after submitting.')
+                 'Only read and review; do not edit source, run tests, merge or push. '
+                 'Answer the acceptance and review questions in --finding. Approve or return corrections.')
+
+
+def require_role(context, role):
+    if context['agent_id'] != context['binding'][role + '_id']:
+        raise SystemExit('Rejected: this action belongs to ' + role + '.')
 
 
 def review_view(context):
     # The issue owns the request and review criteria; omit only the runtime instructions/binding.
     request = context['issue']['description'].rsplit('\n\n' + entry_command('multica-featssship-develop-review'), 1)[0]
-    return {'instruction': REVIEW_PROMPT + '\n\n' + request}
+    return {'instruction': REVIEW_PROMPT + '\n\nIssue criteria (read-only reference):\n' + request}
 
 
 def observed(context):
@@ -23,12 +27,11 @@ def observed(context):
     if not binding:
         raise ValueError('MAIN must supply the issue’s feature configuration before development.')
     role = 'reviewer' if context['phase'] == 'review' else 'developer'
-    if 'result' not in context and context['agent_id'] != binding[role + '_id']:
-        context['state'] = {}
-        raise context['error']('wrong_agent', 'This phase belongs to ' + role + '.')
+    context.update(issue=issue, binding=binding)
+    if 'result' not in context:
+        require_role(context, role)
     if issue['status'] in ('done', 'cancelled', 'in_review'):
         raise Completed('Already reported to MAIN; end this turn.')
-    context.update(issue=issue, binding=binding)
 
 
 def shared_repo(context):
@@ -44,6 +47,7 @@ def submit(args, context):
     digraph submit { node [shape=box]; check [label="Test clean feature commit"];
         push [label="Push branch and request Reviewer"]; check -> push; }
     ```"""
+    require_role(context, 'developer')
     repo, binding = shared_repo(context), context['binding']
     git(repo, 'fetch', 'origin', 'main')
     if git(repo, 'rev-list', '--count', 'origin/main..HEAD') != '1':
@@ -54,27 +58,44 @@ def submit(args, context):
     comment(context['issue_id'], mention(binding['reviewer_id']) + ' Review ' + context['state']['commit'] +
             ': ' + args.summary + '\n\n' + entry_command('multica-featssship-develop-review'),
             getattr(args, 'thread', None), steer_agent=binding['reviewer_id'])
+    context['handoff'] = 'Submitted to Reviewer; end this turn.'
 
 
 def verdict(args, context):
     """```dot
-    digraph verdict { node [shape=box]; inspect [label="Check shared tree and submitted HEAD"];
-        rework [label="Return findings to Developer"]; manual [shape=diamond, label="Manual check?"];
-        merge [label="Merge main and test"];
-        report [label="Push main or send MAIN a manual-check note"];
-        inspect -> rework [label="rework"]; inspect -> manual [label="approve"];
-        manual -> report [label="yes"]; manual -> merge [label="no"]; merge -> report; }
+    digraph verdict { node [shape=box]; inspect [label="Read submitted revision"];
+        rework [label="Return corrections to Developer"];
+        approve [label="Approve; Developer owns integration"];
+        inspect -> rework [label="rework"]; inspect -> approve [label="approve"]; }
     ```"""
+    require_role(context, 'reviewer')
     repo, binding, state = shared_repo(context), context['binding'], context['state']
     commit = state['commit']
     if git(repo, 'rev-parse', 'HEAD') != commit:
         raise ValueError('Review the exact submitted revision; changed code needs a new submission.')
-    if args.event == 'rework':
-        comment(context['issue_id'], mention(binding['developer_id']) + ' ' + args.finding +
-                '\n\n' + entry_command('multica-featssship-develop-review'),
-                getattr(args, 'thread', None), steer_agent=binding['developer_id'])
-        return {'instruction': 'Developer: correct the findings, amend and submit. Reviewer: end this turn.'}
-    note = 'Manual check required for ' + commit + ': ' + args.finding
+    approved = args.event == 'approve'
+    if approved:
+        state['finding'] = args.finding
+    comment(context['issue_id'], mention(binding['developer_id']) +
+            (' Approved ' + commit + '. Integrate and report to MAIN.\n' if approved else ' Rework required.\n') +
+            args.finding + '\n\n' + entry_command('multica-featssship-develop-review'),
+            getattr(args, 'thread', None), steer_agent=binding['developer_id'])
+    context['handoff'] = 'Verdict sent to Developer; end this turn.'
+
+
+def integrate(args, context):
+    """```dot
+    digraph integrate { node [shape=box]; check [label="Developer: check approved HEAD"];
+        manual [shape=diamond, label="Manual check?"]; merge [label="Test, merge main and test"];
+        report [label="Push main or report manual handling to MAIN"];
+        check -> manual; manual -> report [label="yes"]; manual -> merge [label="no"]; merge -> report; }
+    ```"""
+    require_role(context, 'developer')
+    repo, binding, state = shared_repo(context), context['binding'], context['state']
+    commit = state['commit']
+    if git(repo, 'rev-parse', 'HEAD') != commit:
+        raise ValueError('Integrate the exact approved revision; changed code needs a new review.')
+    note = 'Manual check required for ' + commit + ': ' + state['finding']
     if not has_manual(context['issue']):
         try:
             test(repo, binding['test_command'])
@@ -84,7 +105,7 @@ def verdict(args, context):
             git(repo, 'merge', '--no-edit', 'origin/main')
             test(repo, binding['test_command'])
             git(repo, 'push', 'origin', 'HEAD:refs/heads/main')
-            note = 'Merged ' + git(repo, 'rev-parse', 'HEAD') + ': ' + state['summary'] + '\nReview: ' + args.finding
+            note = 'Merged ' + git(repo, 'rev-parse', 'HEAD') + ': ' + state['summary'] + '\nReview: ' + state['finding']
         except ValueError as error:
             subprocess.run(['git', 'merge', '--abort'], cwd=repo, capture_output=True)
             note = 'Manual check required for ' + commit + ': ' + str(error)
@@ -104,10 +125,13 @@ workflow = Workflow(
     State('review', REVIEW_PROMPT + '\n\nDefault review questions:\n' + '\n'.join('- ' + q for q in QUESTIONS) +
           '\n\nAlso answer the feature-specific Acceptance question from this issue.',
           precheck=observed, view=review_view, options=(
-              Option('approve', 'finished', 'Merge and test, or report manual handling to MAIN.', verdict,
+              Option('approve', 'integrate', 'Approve the revision and return integration to Developer.', verdict,
                      params=(Parameter('--finding', 'Acceptance answer and review evidence'),)),
               Option('rework', 'develop', 'Send corrections to Developer.', verdict,
                      params=(Parameter('--finding', 'Concrete corrections'),)))),
+    State('integrate', 'Developer: integrate the approved revision, run the configured tests and report '
+          'one verified result to MAIN.', precheck=observed,
+          options=(Option('integrate', 'finished', 'Integrate and test, or report manual handling to MAIN.', integrate),)),
     State('finished', 'Reported to MAIN; end this turn.', final=True),
     params=(Parameter('--thread', 'Native triggering comment UUID', required=False),),
 )

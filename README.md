@@ -55,11 +55,15 @@ Draft with `propose --title TITLE --request REQUEST --direction NAME --scope SCO
 then `dispatch`. An optional `--github-issue URL` mirrors an existing source issue;
 it does not replace the delegated acceptance criteria.
 
-The feature issue has one workflow: `develop → review → finished`; rework returns
+The feature issue has one workflow: `develop → review → integrate → finished`; rework returns
 to `develop`. Both agents use the same installed skill and issue folder. Only
 the configured Developer can submit; only the configured Reviewer can judge.
-Reviewer approval merges current main, tests and pushes. A manual label, merge
-conflict or failed check sends MAIN a note and finishes.
+Reviewer only reads and returns approval or corrections; no source writes, tests,
+merge or push. Approval hands the approved revision back to Developer for tests,
+integration and reporting. A manual label, merge conflict or failed check sends
+MAIN a note and finishes. Wrong-role action calls reject on stderr without JSON or state
+changes. Handoffs return only a plain stop message to the sender, not the next
+role's JSON guidance. The receiving agent reads its own guidance on entry.
 
 MAIN creates the remote feature branch before dispatch. The issue checkout must
 already use that branch. Checkout provisioning belongs to installation/platform

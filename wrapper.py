@@ -644,7 +644,7 @@ def main(argv=None):
                 output = redact(response(result))
     context['output'] = output
     publish_artifacts(context, controller, result)
-    print(json.dumps(output, allow_nan=False))
+    print(redact(context['handoff']) if result['ok'] and context.get('handoff') else json.dumps(output, allow_nan=False))
     return 0 if result["ok"] else result.get("returncode", 1)
 
 

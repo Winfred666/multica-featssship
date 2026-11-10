@@ -91,13 +91,15 @@ class WorkflowFixture(unittest.TestCase):
         self.reviewer = build('feature', self.base / 'reviewer-skill')
         return json.loads(result.stdout)
 
-    def invoke(self, package, *args, role='developer', issue=None, task=None, trigger=None, ok=True, entry=False):
+    def invoke(self, package, *args, role='developer', issue=None, task=None, trigger=None, ok=True, entry=False, plain=False):
         self.task = task or str(uuid.uuid4())
         env = {**self.env, 'MULTICA_AGENT_ID': self.config[role + '_id'],
                'MULTICA_ISSUE_ID': issue or self.feature_id, 'MULTICA_WORKSPACE_ID': self.ids['workspace']}
         if trigger:
             env['FEATSSSHIP_TRIGGER'] = trigger
         result = self.call(sys.executable, str(package / 'wrapper.py'), *args, env=env, ok=ok)
+        if plain:
+            return result
         output = json.loads(result.stdout)
         self.assertNotIn('data', output, output)
         if ok:
@@ -146,14 +148,23 @@ class WorkflowFixture(unittest.TestCase):
         self.invoke(self.developer)
         (self.repo / 'message.txt').write_text(text + '\n')
         commit = self.commit(text, amend=bool(self.state().get('commit')))
-        self.invoke(self.developer, 'submit', '--summary', 'Updated message.txt: ' + text)
+        result = self.invoke(self.developer, 'submit', '--summary', 'Updated message.txt: ' + text, plain=True)
+        self.assertEqual(result.stdout, 'Submitted to Reviewer; end this turn.\n')
+        self.assertEqual(result.stderr, '')
         return commit
 
     def review(self, verdict):
         self.invoke(self.reviewer, role='reviewer')
-        return self.invoke(self.reviewer, verdict, '--finding',
+        result = self.invoke(self.reviewer, verdict, '--finding',
                            'Acceptance, necessary additions and scope verified.' if verdict == 'approve' else
-                           'Replace almost with shipped.', role='reviewer')
+                           'Replace almost with shipped.', role='reviewer', plain=True)
+        self.assertEqual(result.stdout, 'Verdict sent to Developer; end this turn.\n')
+        self.assertEqual(result.stderr, '')
+        return self.state()['output']
+
+    def integrate(self):
+        self.invoke(self.developer)
+        return self.invoke(self.developer, 'integrate')
 
     def parent_notes(self):
         return [r['content'] for r in self.db()['comments']
@@ -183,19 +194,27 @@ class WorkflowFixture(unittest.TestCase):
         self.invoke(self.developer)
         before = self.state()
         for event in ('init', 'quit'):
-            denied = self.invoke(self.reviewer, *([] if event == 'init' else [event]), role='reviewer', ok=False)
-            self.assertEqual(denied['error']['code'], 'wrong_agent')
+            denied = self.invoke(self.reviewer, *([] if event == 'init' else [event]), role='reviewer', ok=False, plain=True)
+            self.assertNotEqual(denied.returncode, 0)
+            self.assertEqual(denied.stdout, '')
+            self.assertIn('belongs to developer', denied.stderr)
             self.assertEqual(self.state(), before)
         first_commit = self.submit('almost')
         before = self.state()
-        denied = self.invoke(self.developer, 'approve', ok=False)
-        self.assertEqual(denied['error']['code'], 'wrong_agent')
-        self.assertEqual(self.state(), before)
+        for event in ('init', 'approve', 'rework'):
+            denied = self.invoke(self.developer, *([] if event == 'init' else [event]), ok=False, plain=True)
+            self.assertNotEqual(denied.returncode, 0)
+            self.assertEqual(denied.stdout, '')
+            self.assertIn('belongs to reviewer', denied.stderr)
+            self.assertEqual(self.state(), before)
         self.assertEqual(self.review('rework')['status'], 'develop')
         commit = self.submit('shipped')
         self.assertNotEqual(first_commit, commit)
         self.advance_main('other.txt', 'Concurrent safe change\n')
-        self.assertEqual(self.review('approve')['status'], 'finished')
+        self.assertEqual(self.review('approve')['status'], 'integrate')
+        self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'baseline\n')
+        self.assertEqual(self.parent_notes(), [])
+        self.assertEqual(self.integrate()['status'], 'finished')
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'shipped\n')
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:other.txt').stdout, 'Concurrent safe change\n')
         self.assertEqual(len(self.parent_notes()), 1)
@@ -214,7 +233,8 @@ class WorkflowFixture(unittest.TestCase):
         db = self.db()
         db['issues'][self.feature_id]['labels'] = [{'name': 'manual'}]
         self.db_path.write_text(json.dumps(db))
-        self.assertEqual(self.review('approve')['status'], 'finished')
+        self.assertEqual(self.review('approve')['status'], 'integrate')
+        self.assertEqual(self.integrate()['status'], 'finished')
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'baseline\n')
         self.assertIn('Manual check required', self.parent_notes()[0])
         self.assertEqual(self.state(), {})
@@ -245,7 +265,11 @@ raise SystemExit(wrapper.main(sys.argv[3:]))
             self.assertEqual(result.stderr, '')
             payload = re.search(r'<script id="sop-data" type="application/json">(.*?)</script>',
                                 snapshot.read_text(), re.S)[1]
-            return json.loads(result.stdout), json.loads(payload)
+            if args:
+                self.assertEqual(result.stdout, 'Submitted to Reviewer; end this turn.\n')
+            else:
+                self.assertEqual(json.loads(result.stdout)['status'], 'develop')
+            return self.state()['output'], json.loads(payload)
 
         _, graph = step()
         self.assertEqual(graph['decision']['status'], 'develop')
@@ -260,6 +284,8 @@ raise SystemExit(wrapper.main(sys.argv[3:]))
             self.assertIn(expected, graph['nodes']['review']['instruction'])
         self.assertNotIn('Does the delivered behavior satisfy the request and acceptance evidence?', snapshot.read_text())
         self.assertNotIn('featssship:binding', output['instruction'])
+        self.assertNotIn('Developer:', output['instruction'])
+        self.assertNotIn('Merge and test', output['next_step'][0]['instruction'])
         self.assertEqual(self.invoke(self.reviewer, role='reviewer')['instruction'], output['instruction'])
         self.assertEqual(self.call('git', 'branch', '--show-current').stdout.strip(), self.binding['branch'])
         self.assertEqual(self.call('git', 'status', '--porcelain').stdout, '')
@@ -268,7 +294,8 @@ raise SystemExit(wrapper.main(sys.argv[3:]))
         self.install(); self.dispatch()
         commit = self.submit('shipped')
         self.advance_main('message.txt', 'Conflicting main change\n')
-        self.assertEqual(self.review('approve')['status'], 'finished')
+        self.assertEqual(self.review('approve')['status'], 'integrate')
+        self.assertEqual(self.integrate()['status'], 'finished')
         self.assertIn('Manual check required', self.parent_notes()[0])
         self.assertEqual(self.call('git', 'rev-parse', 'HEAD').stdout.strip(), commit)
         self.assertEqual((self.repo / 'message.txt').read_text(), 'shipped\n')
@@ -285,6 +312,41 @@ raise SystemExit(wrapper.main(sys.argv[3:]))
         self.assertEqual(self.parent_notes(), [])
         self.assertEqual(self.state()['commit'], before)
 
+    def test_reviewer_only_reads_and_developer_integrates_approved_head(self):
+        self.install(); self.dispatch(); self.submit('shipped')
+        self.invoke(self.reviewer, role='reviewer')
+        code = """import sys
+sys.path.insert(0, sys.argv[1])
+import common, wrapper
+git = common.git
+def read_only(repo, *words):
+    assert words[0] in {'status', 'branch', 'rev-parse'}, words
+    return git(repo, *words)
+def no_test(*args):
+    raise AssertionError('Reviewer must not run tests')
+common.git, common.test = read_only, no_test
+raise SystemExit(wrapper.main(['approve', '--finding', 'Scope and necessity verified.']))
+"""
+        env = {**self.env, 'MULTICA_AGENT_ID': self.config['reviewer_id'],
+               'MULTICA_ISSUE_ID': self.feature_id, 'MULTICA_WORKSPACE_ID': self.ids['workspace']}
+        result = self.call(sys.executable, '-c', code, str(self.reviewer), env=env)
+        self.assertEqual(result.stdout, 'Verdict sent to Developer; end this turn.\n')
+        self.assertEqual(result.stderr, '')
+        approved = self.state()
+        self.assertEqual(approved['status'], 'integrate')
+        self.assertEqual(self.parent_notes(), [])
+        self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'baseline\n')
+        denied = self.invoke(self.reviewer, 'integrate', role='reviewer', plain=True, ok=False)
+        self.assertNotEqual(denied.returncode, 0)
+        self.assertEqual(denied.stdout, '')
+        self.assertIn('belongs to developer', denied.stderr)
+        self.assertEqual(self.state(), approved)
+        (self.repo / 'message.txt').write_text('unreviewed\n')
+        self.commit('unreviewed', amend=True)
+        rejected = self.invoke(self.developer, 'integrate', ok=False)
+        self.assertIn('exact approved revision', rejected['error']['message'])
+        self.assertEqual(self.parent_notes(), [])
+
     def test_failed_independent_check_reports_to_main(self):
         self.install(); self.dispatch(); self.submit('shipped')
         db = self.db()
@@ -292,7 +354,8 @@ raise SystemExit(wrapper.main(sys.argv[3:]))
         db['issues'][self.feature_id]['description'] = db['issues'][self.feature_id]['description'].replace(
             block('binding', self.binding), block('binding', binding))
         self.db_path.write_text(json.dumps(db))
-        self.assertEqual(self.review('approve')['status'], 'finished')
+        self.assertEqual(self.review('approve')['status'], 'integrate')
+        self.assertEqual(self.integrate()['status'], 'finished')
         self.assertIn('Configured check failed', self.parent_notes()[0])
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'baseline\n')
 

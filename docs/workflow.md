@@ -8,10 +8,12 @@ digraph develop_review {
   rankdir=LR; node [shape=box];
   develop [label="Developer: implement, test and submit"];
   review [label="Reviewer: inspect exact revision"];
-  finished [label="Merge and test, or send MAIN a manual-check note"];
+  integrate [label="Developer: test, integrate and report to MAIN"];
+  finished [label="Reported to MAIN"];
   develop -> review [label="submit"];
   review -> develop [label="rework"];
-  review -> finished [label="approve"];
+  review -> integrate [label="approve"];
+  integrate -> finished [label="integrate"];
 }
 ```
 
@@ -20,6 +22,11 @@ agent ID guards each phase. Review never creates a checkout or switches branches
 it checks the existing tree and submitted HEAD in place. A manual label, conflict
 or failed integration is reported to the parent; the child workflow finishes.
 Human acceptance owns done.
+
+Reviewer only reads and returns a verdict. Developer owns all tests and Git
+writes. Approval hands integration back to Developer. Each sender receives only
+a plain stop message, while metadata and HTML retain the receiving role's
+guidance. Wrong-role action calls exit nonzero on stderr without JSON or writes.
 
 Select `review` in the HTML graph to see the two default questions from
 [`common.QUESTIONS`](../common.py). A running review also shows the issue's
