@@ -168,6 +168,8 @@ class WorkflowFixture(unittest.TestCase):
 
     def test_two_agent_correction_merge_and_minimal_binding(self):
         self.install()
+        for package in (self.root_package, self.developer, self.reviewer):
+            self.assertIs(json.loads((package / 'config.json').read_text())['DEBUG'], True)
         first = self.db()
         self.install()
         self.assertEqual(set(self.db()['agents']), set(first['agents']))
@@ -254,14 +256,14 @@ class WorkflowFixture(unittest.TestCase):
         # MAIN has completed; feature state remains shared and live in review.
         package = self.developer
         state = self.state()
-        (package / 'config.json').write_text('{"DEBUG": true}')
+        (package / 'config.json').write_text('{"DEBUG": false}')
         legacy = package / '.state/legacy-task.json'
         legacy.parent.mkdir()
         legacy.write_text('{"status":"implement"}')
         build('feature', package)
         self.assertEqual(self.state(), state)
         self.assertEqual(legacy.read_text(), '{"status":"implement"}')
-        self.assertEqual(json.loads((package / 'config.json').read_text()), {'DEBUG': True})
+        self.assertEqual(json.loads((package / 'config.json').read_text()), {'DEBUG': False})
         before = len([c for c in self.db()['calls'] if c[:2] == ['issue', 'metadata']])
         for role in ('developer', 'reviewer'):
             self.assertEqual(self.invoke(package, '--help', role=role), state['output'])
@@ -276,7 +278,7 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(before, after)
         self.install()
         self.assertEqual(self.state(), state)
-        self.assertEqual(json.loads((package / 'config.json').read_text()), {'DEBUG': True})
+        self.assertEqual(json.loads((package / 'config.json').read_text()), {'DEBUG': False})
 
     def test_preview_failure_preserves_action_result(self):
         self.install()

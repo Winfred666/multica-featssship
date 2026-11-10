@@ -20,5 +20,9 @@ agent ID guards each phase. A manual label, conflict or failed integration is
 reported to the parent; the child workflow finishes. Human acceptance owns done.
 
 The HTML graph comes from `Workflow`; action docstrings explain local logic.
-Enable `DEBUG` in package `config.json` for an offline, selectable Graphviz
-preview. Package rebuilds retain settings. No renderer service is required.
+`DEBUG` defaults to `true` in the root and newly built packages' `config.json`.
+During native runs, each state change or completion publishes an HTML graph
+highlighting the actual resulting state. Selecting a node only inspects its
+guidance; it does not advance the workflow. Package rebuilds retain existing
+settings, so enable `DEBUG` explicitly in older packages. No renderer service
+is required.
