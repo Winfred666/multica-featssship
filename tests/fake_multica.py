@@ -27,7 +27,8 @@ def main():
         result = db['agents'][args[2]]
     elif args[:2] == ['agent', 'create']:
         result = {'id': new(), 'name': option('name'), 'runtime_id': option('runtime-id'),
-                  'workspace_id': db['workspace_id'], 'instructions': option('instructions')}
+                  'workspace_id': db['workspace_id'], 'instructions': option('instructions'),
+                  'model': option('model', ''), 'thinking_level': option('thinking-level', '')}
         db['agents'][result['id']] = result
     elif args[:3] == ['agent', 'skills', 'list']:
         result = [{'id': key, 'name': db['skills'][key]['name']} for key in db['bindings'].get(args[3], [])]
@@ -53,6 +54,11 @@ def main():
         result['description'] = option('description')
     elif args[:2] == ['issue', 'get']:
         result = db['issues'][args[2]]
+    elif args[:3] == ['issue', 'subscriber', 'add']:
+        subscribers = db.setdefault('subscribers', {}).setdefault(args[3], [])
+        if option('user-id') not in subscribers:
+            subscribers.append(option('user-id'))
+        result = {'subscribed': True}
     elif args[:2] == ['issue', 'metadata']:
         result = db['issues'][args[3]]
         metadata = result.setdefault('metadata', {})
@@ -72,6 +78,9 @@ def main():
                   'parent_issue_id': option('parent'), 'assignee_id': option('assignee-id'),
                   'assignee_type': 'agent', 'labels': [], 'status': option('status'), 'metadata': {}}
         db['issues'][result['id']] = result
+    elif args[:3] == ['issue', 'label', 'add']:
+        result = db['issues'][args[3]]
+        result['labels'].append({'id': args[4], 'name': 'manual'})
     elif args[:2] == ['issue', 'update']:
         result = db['issues'][args[2]]
         if option('title'):

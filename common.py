@@ -67,6 +67,14 @@ def git(repo, *words):
     return run('git', '-C', str(repo), *words)
 
 
+def feature_branch(direction, name):
+    if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', name):
+        raise ValueError('Give a short kebab-case feature name, such as tree-horizontal-more.')
+    branch = direction.get('branch_prefix', 'feat/' + direction['name']) + '/' + name
+    run('git', 'check-ref-format', '--branch', branch)
+    return branch
+
+
 def clean(repo):
     if git(repo, 'status', '--porcelain'):
         raise ValueError('Commit or preserve working-tree changes before this action.')
