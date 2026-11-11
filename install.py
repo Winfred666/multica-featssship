@@ -131,6 +131,11 @@ def execute(config, issue):
     validate(config)
     repo = repo_root()
     check_repo(repo, config)
+    if not issue.get('project_id'):
+        config['installed_project_id'] = config.get('installed_project_id') or cli('project', 'create', '--title', config['repository'].rstrip('/').rsplit('/', 1)[-1].removesuffix('.git'), '--repo', config['repository'])['id']
+        save_config(issue['id'], config)
+        cli('issue', 'update', issue['id'], '--project', config['installed_project_id'], '--no-start')
+        issue['project_id'] = config['installed_project_id']
     config.update(installed_workspace_id=issue['workspace_id'], installed_project_id=issue['project_id'])
     save_config(issue['id'], config)
     root = main_root(config, issue)

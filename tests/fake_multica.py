@@ -47,6 +47,9 @@ def main():
         skill = {'id': existing['id'] if existing else new(), 'name': name, 'files': files}
         db['skills'][skill['id']] = skill
         result = {'status': 'updated' if existing else 'created', 'skill': {'id': skill['id']}}
+    elif args[:2] == ['project', 'create']:
+        result = {'id': new(), 'workspace_id': db['workspace_id'], 'title': option('title'), 'description': '', 'repository': option('repo')}
+        db['projects'][result['id']] = result
     elif args[:2] == ['project', 'get']:
         result = db['projects'][args[2]]
     elif args[:2] == ['project', 'update']:
@@ -89,6 +92,8 @@ def main():
         result['labels'].append({'id': args[4], 'name': 'manual'})
     elif args[:2] == ['issue', 'update']:
         result = db['issues'][args[2]]
+        if option('project'):
+            result['project_id'] = option('project')
         if option('title'):
             result['title'] = option('title')
         if '--description-stdin' in args:

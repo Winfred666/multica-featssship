@@ -143,6 +143,7 @@ class WorkflowFixture(unittest.TestCase):
         audit = self.read_answers()
         root = next(row for row in self.db()['issues'].values() if row.get('parent_issue_id') == self.ids['installer'] and row['title'].startswith('MAIN DEV:'))
         self.ids['root'] = root['id']
+        self.ids['project'] = root['project_id']
         self.config = {**audit, 'root_issue_id': root['id'],
                        **{key: audit['installed_' + key] for key in ('delegator_id', 'developer_id', 'reviewer_id', 'feature_skill_id', 'delegation_skill_id')}}
         self.root_package = self.repo / '.agents/skills' / ('multica-featssship-' + self.ids['project'][:8])
@@ -393,6 +394,7 @@ class WorkflowFixture(unittest.TestCase):
         old_root = self.ids['root']
         db = self.db()
         del db['issues'][old_root]
+        db['issues'][self.ids['installer']]['project_id'] = None
         self.db_path.write_text(json.dumps(db))
         result = self.install()
         self.assertIn('delegator', self.read_answers())
@@ -402,6 +404,8 @@ class WorkflowFixture(unittest.TestCase):
         child = self.db()['issues'][result['root_issue_id']]
         self.assertNotEqual(child['id'], old_root)
         self.assertEqual(child['parent_issue_id'], self.ids['installer'])
+        self.assertEqual(child['project_id'], self.db()['issues'][self.ids['installer']]['project_id'])
+        self.assertEqual(self.db()['projects'][child['project_id']]['repository'], legacy['repository'])
         self.assertEqual(child['status'], 'backlog')
         self.assertTrue(child['title'].startswith('MAIN DEV:'))
         main = self.db()['agents'][self.config['delegator_id']]
@@ -420,6 +424,7 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(self.install()['root_issue_id'], child['id'])
         self.assertEqual(set(self.db()['issues']), set(before['issues']))
         self.assertEqual(set(self.db()['agents']), set(before['agents']))
+        self.assertEqual(sum(call[:2] == ['project', 'create'] for call in self.db()['calls']), 1)
         self.assertFalse(any(call[:2] == ['issue', 'list'] for call in self.db()['calls']))
 
     def test_install_edits_complete_config_then_requires_latest_human_confirmation(self):
