@@ -52,13 +52,19 @@ def main():
     elif args[:2] == ['project', 'update']:
         result = db['projects'][args[2]]
         result['description'] = option('description')
+    elif args[:2] == ['label', 'list']:
+        result = list({label['id']: label for issue in db['issues'].values() for label in issue.get('labels', [])}.values())
+    elif args[:2] == ['label', 'create']:
+        result = {'id': new(), 'name': option('name')}
     elif args[:2] == ['issue', 'get']:
         result = db['issues'][args[2]]
+    elif args[:2] == ['issue', 'children']:
+        result = {'stages': [], 'unstaged': [row for row in db['issues'].values() if row.get('parent_issue_id') == args[2]]}
     elif args[:3] == ['issue', 'subscriber', 'add']:
-        subscribers = db.setdefault('subscribers', {}).setdefault(args[3], [])
-        if option('user-id') not in subscribers:
-            subscribers.append(option('user-id'))
-        result = {'subscribed': True}
+        users = db.setdefault('subscribers', {}).setdefault(args[3], [])
+        if option('user') not in users:
+            users.append(option('user'))
+        result = {'ok': True}
     elif args[:2] == ['issue', 'metadata']:
         result = db['issues'][args[3]]
         metadata = result.setdefault('metadata', {})

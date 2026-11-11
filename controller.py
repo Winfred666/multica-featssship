@@ -1,211 +1,178 @@
-"""The only root SOP: dispatch one feature and let MAIN receive its result."""
+"""MAIN edits one metadata config, dispatches it, and receives the result."""
 import json
 from pathlib import Path
 
-from common import QUESTIONS, block, cli, comment, entry_command, feature_branch, has_manual, unpack
+from common import PROCESS_KEY, WAIT_OUTER, block, check_repo, cli, comment, entry_command, feature_branch, git, has_manual, installation_config, installer_config, merge_patch, process_config, repo_root, save_config
 from github_issue import issue_link, mirror_title
 from sop import Option, Parameter, State, Workflow
 
-ROOT = Path(__file__).resolve().parent
-SPEC_PARAMS = (
-    Parameter('--name', 'Short feature name, such as tree-horizontal-more'),
-    Parameter('--title', 'Feature/fix title; defaults to the short name', required=False),
-    Parameter('--request', 'Requested behavior'),
-    Parameter('--direction', 'Configured direction name'), Parameter('--scope', 'Feature/fix scope'),
-    Parameter('--question', 'Acceptance question'),
-    Parameter('--test-command', 'Verification command; defaults to the configured direction', required=False),
-    Parameter('--github-issue', 'Optional existing GitHub source issue URL', required=False),
-)
-EDIT_PARAMS = tuple(Parameter(param.flag, param.prompt, required=False) for param in SPEC_PARAMS)
+DELEGATION_KEY = 'featssship.delegation'
+FIELDS = ('name', 'request', 'direction', 'title', 'scope', 'question', 'github_issue', 'manual')
+PROMPT = ('Align the config with this request, keeping choices that already fit. '
+          'If context leaves a field uncertain, ask the human one self-contained question and end this turn. '
+          'Use edit to record the answer; otherwise dispatch. If waiting for an outer reply: ' + WAIT_OUTER + ' ')
+COMMENTS = ('name is a short kebab-case feature name; direction selects installed defaults for scope, '
+            'question and branch prefix. Verification guidance comes from the project description. title defaults to name. '
+            'manual is a boolean; true publishes a remote feature branch and waits for superior approval. github_issue is an optional source URL. Config and dispatch checkpoints stay in MAIN metadata.')
 
 
 def configured(context):
-    config = json.loads((ROOT / 'installation.json').read_text())
-    if (context['workspace_id'], context['issue_id'], context['agent_id']) != (config['workspace_id'], config['root_issue_id'], config['main_id']):
+    main = cli('issue', 'get', context['issue_id'])
+    process = process_config(main)
+    if (not process or context['workspace_id'] != main['workspace_id']
+            or context['agent_id'] != main['assignee_id']):
         context['state'] = {}
-        raise context['error']('wrong_agent', 'Delegation belongs to the configured MAIN root and native identity.')
-    context['config'] = config
+        raise context['error']('wrong_agent', 'Delegation belongs to the MAIN child and its native assignee.')
+    record = context['state'].get('delegation', installation_config(main, DELEGATION_KEY))
+    if record:
+        record['config'].pop('test_command', None)
+    context.update(main=main, process=process, installed=installer_config(main), record=record)
+    if context['args'].config is not None:
+        config = json.loads(context['args'].config)
+        if not isinstance(config, dict):
+            raise ValueError('--config must be a JSON object.')
+        if not record or (record.get('dispatched') and context['args'].thread and context['args'].thread != record.get('thread')):
+            record = {'config': config, 'thread': context['args'].thread}
+            context['record'] = record
+        elif config != record['config']:
+            raise ValueError('Resume without --config and use edit; start a new request with a new --thread after dispatch.')
+    record.setdefault('config', {})
+    config = record['config']
+    if set(config) - set(FIELDS) or any(not isinstance(value, bool if key == 'manual' else str) for key, value in config.items()):
+        raise ValueError('manual must be boolean; other config fields must be strings: ' + ', '.join(FIELDS))
+    context['state']['delegation'] = record
     if context['args'].thread:
         context['state']['reply_parent'] = context['args'].thread
-    if context['args'].spec:
-        context['state'].setdefault('spec_id', context['args'].spec)
+
+
+def request_config(context):
+    config = dict(context['record']['config'])
+    config.setdefault('manual', has_manual(context['main']) or context['process'].get('manual', False))
+    directions = context['process']['directions']
+    if len(directions) == 1:
+        config.setdefault('direction', next(iter(directions)))
+    selected = directions.get(config.get('direction'))
+    if selected:
+        init = next(d for d in context['installed']['directions'] if d['name'] == config['direction'])
+        for key, value in (('scope', init['scope']), ('question', selected['questions'][0])):
+            config.setdefault(key, value)
     return config
 
 
-def direction(config, name):
-    selected = next((d for d in config['directions'] if d['name'] == name), None)
-    if not selected:
-        raise ValueError('Choose a configured direction: ' + ', '.join(d['name'] for d in config['directions']))
-    return selected
-
-
-def publish_spec(context, spec):
-    row = comment(context['issue_id'], block('spec', spec),
-                  context['args'].thread or context['state'].get('reply_parent') or context['state'].get('spec_id'))
-    context['state']['spec_id'] = row['id']
-    return {'instruction': f'Read draft comment {row["id"]}. ' + workflow.states['grilling'].description}
-
-
-def read_spec(context):
-    target = context['state'].get('spec_id') or context['args'].spec or context['args'].thread or context['state'].get('reply_parent')
-    if not target:
-        raise ValueError('Draft a specification first, or reopen it with --spec <draft comment UUID>.')
-    rows = cli('issue', 'comment', 'list', context['issue_id'], '--thread', target, '--tail', '30')
-    drafts = [(unpack(row.get('content', ''), 'spec'), row) for row in rows
-              if row.get('author_type') == 'agent' and row.get('author_id') == context['config']['main_id']
-              and unpack(row.get('content', ''), 'spec')]
-    if not drafts:
-        raise ValueError('This thread has no MAIN specification draft.')
-    spec, row = drafts[-1]
-    context['state']['spec_id'] = row['id']
-    return spec, row, rows
-
-
-def propose(args, context):
-    """```dot
-    digraph propose {
-        rankdir=LR; node [shape=box];
-        propose_source [label="Saved draft?", shape=diamond];
-        propose_read [label="Read draft unchanged"];
-        propose_publish [label="Select direction and publish specification"];
-        propose_source -> propose_read [label="yes"];
-        propose_source -> propose_publish [label="no"];
-    }
-    ```"""
-    if context['state'].get('spec_id'):
-        _, row, _ = read_spec(context)
-        return {'instruction': f'Read draft comment {row["id"]}. ' + workflow.states['grilling'].description}
-    selected = direction(context['config'], args.direction)
-    spec = {key: getattr(args, key) for key in ('name', 'request', 'direction', 'scope', 'question')}
-    spec['title'] = args.title or args.name
-    spec['branch'] = feature_branch(selected, args.name)
-    spec['test_command'] = args.test_command or selected['test_command']
-    spec['questions'] = list(QUESTIONS)
-    url = issue_link(spec['title'], args.github_issue)
-    if url:
-        spec['github_issue'] = url
-    return publish_spec(context, spec)
-
-
-def drafting_options(context):
-    return (Option('propose', 'grilling', 'Draft the delegation config, or reopen --spec unchanged.', propose,
-                   params=() if context['state'].get('spec_id') else SPEC_PARAMS),)
+def view(context):
+    return {'instruction': PROMPT + COMMENTS + '\n\nCurrent config:\n' + json.dumps(request_config(context), indent=2)}
 
 
 def edit(args, context):
     """```dot
-    digraph edit {
-        rankdir=LR; node [shape=box];
-        edit_check [label="Require one nonblank field"];
-        edit_read [label="Read current specification"];
-        edit_patch [label="Patch field and validate direction and source link"];
-        edit_publish [label="Publish revised specification"];
-        edit_check -> edit_read;
-        edit_read -> edit_patch;
-        edit_patch -> edit_publish;
-    }
+    digraph edit { node [shape=box]; patch [label="Merge patch into request config"];
+        save [label="Save MAIN metadata and comment config; stay in grilling"];
+        patch -> save; }
     ```"""
-    patch = {param.flag[2:].replace('-', '_'): getattr(args, param.flag[2:].replace('-', '_'))
-             for param in EDIT_PARAMS if getattr(args, param.flag[2:].replace('-', '_')) is not None}
-    if len(patch) != 1:
-        raise ValueError('Ask the human one question, then supply exactly one field to edit.')
-    if not next(iter(patch.values())).strip():
-        raise ValueError('The edited field must not be blank.')
-    spec, _, _ = read_spec(context)
-    spec.update(patch)
-    selected = direction(context['config'], spec['direction'])
-    spec['branch'] = feature_branch(selected, spec['name'])
-    url = issue_link(spec['title'], spec.get('github_issue'))
-    if url:
-        spec['github_issue'] = url
-    return publish_spec(context, spec)
+    record = context['record']
+    if record.get('issue_id'):
+        raise ValueError('This request is already dispatched; start a new request with --thread and --config.')
+    patch = json.loads(args.patch)
+    if not isinstance(patch, dict) or set(patch) - set(FIELDS) or any(value is not None and not isinstance(value, bool if key == 'manual' else str) for key, value in patch.items()):
+        raise ValueError('--patch expects manual as boolean, other fields as strings, or null: ' + ', '.join(FIELDS))
+    record['config'] = merge_patch(record['config'], patch)
+    save_config(context['issue_id'], record, DELEGATION_KEY)
+    comment(context['issue_id'], block('delegation-config', request_config(context)),
+            args.thread or context['state'].get('reply_parent') or record.get('thread'))
 
 
 def dispatch(args, context):
     """```dot
-    digraph dispatch {
-        rankdir=LR; node [shape=box];
-        dispatch_read [label="Read specification and dispatch checkpoint"];
-        dispatch_exists [label="Already started?", shape=diamond];
-        dispatch_reuse [label="Return existing feature"];
-        dispatch_create [label="Create or reuse parked feature and native threads"];
-        dispatch_compile [label="Publish shared feature binding"];
-        dispatch_start [label="Start Developer and save checkpoint"];
-        dispatch_read -> dispatch_exists;
-        dispatch_exists -> dispatch_reuse [label="yes"];
-        dispatch_exists -> dispatch_create [label="no"];
-        dispatch_create -> dispatch_compile;
-        dispatch_compile -> dispatch_start;
-    }
+    digraph dispatch { node [shape=box]; validate [label="Require complete config"];
+        child [label="Create child once or resume saved dispatch"];
+        publish [label="Prepare local worktree; remote branch only if manual"];
+        start [label="Start Developer; retain config and checkpoint"];
+        validate -> child -> publish -> start; }
     ```"""
-    config = context['config']
-    request, spec_row, rows = read_spec(context)
-    selected = direction(config, request['direction'])
-    request['branch'] = feature_branch(selected, request['name'])
-    # The issue metadata checkpoint survives agent/task changes.
-    owned = context['state'].setdefault('dispatch', {})
-    if owned.get('spec_id', spec_row['id']) != spec_row['id']:
-        raise ValueError('The dispatch checkpoint belongs to a different draft.')
-    previous = next((row for row in rows if row.get('author_type') == 'agent' and row.get('author_id') == config['main_id']
-                     and (unpack(row.get('content', ''), 'dispatch') or {}).get('spec_id') == spec_row['id']), None)
-    if previous:
-        owned.update(unpack(previous['content'], 'dispatch'), main_thread_id=previous['id'])
-        child = cli('issue', 'get', owned['issue_id'])
-        if unpack(child['description'], 'binding') and child['status'] != 'backlog':
-            return {'instruction': 'Already dispatched; end this turn.'}
-    binding = dict(request)
-    url = request.get('github_issue')
+    record, process = context['record'], context['process']
+    request = request_config(context)
+    if record.get('issue_id'):
+        child = cli('issue', 'get', record['issue_id'])
+        if process_config(child) and child['status'] != 'backlog':
+            record['dispatched'] = True
+            save_config(context['issue_id'], record, DELEGATION_KEY)
+            return {'instruction': 'Already dispatched to ' + child['id'] + '; end this turn.'}
+    missing = [key for key in ('name', 'request', 'direction', 'scope', 'question') if not request.get(key, '').strip()]
+    if missing:
+        return {'accepted': False, 'instruction': view(context)['instruction'] +
+                '\n\nFill from context or ask one question about: ' + ', '.join(missing)}
+    selected = process['directions'].get(request['direction'])
+    if not selected:
+        raise ValueError('Choose a configured direction: ' + ', '.join(process['directions']))
+    branch = feature_branch(selected, request['name'])
+    title = request.get('title') or request['name']
+    url = issue_link(title, request.get('github_issue'))
     if url:
-        binding['title'] = mirror_title(request['title'], url)
-    if 'issue_id' not in owned:
-        child = cli('issue', 'create', '--title', binding['title'], '--description-stdin', '--parent', context['issue_id'],
-                    '--project', config['project_id'], '--assignee-id', config['developer_id'], '--status', 'backlog', input=binding['request'])
-        owned.update(issue_id=child['id'], spec_id=spec_row['id'])
-        context['save_state']()
-    binding['issue_id'] = owned['issue_id']
-    parent = cli('issue', 'get', context['issue_id'])
-    child = cli('issue', 'get', binding['issue_id'])
-    if has_manual(parent) and not has_manual(child):
-        label = next(label for label in parent['labels'] if label['name'] == 'manual')
+        title = mirror_title(title, url)
+    if not record.get('issue_id'):
+        child = cli('issue', 'create', '--title', title, '--description-stdin', '--parent', context['issue_id'],
+                    '--project', context['main']['project_id'], '--assignee-id', context['installed']['installed_developer_id'],
+                    '--status', 'backlog', input=request['request'])
+        record['issue_id'] = child['id']
+        save_config(context['issue_id'], record, DELEGATION_KEY)
+    child = cli('issue', 'get', record['issue_id'])
+    repo = repo_root()
+    check_repo(repo, context['installed'])
+    parent_branch = context['main'].get('metadata', {}).get('git_branch', 'main')
+    ref = 'refs/heads/' + branch
+    common = Path(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'))
+    worktree = common / 'featsship' / child['id']
+    if not record.get('branch_base'):
+        git(repo, 'fetch', 'origin', parent_branch)
+        base = git(repo, 'rev-parse', 'FETCH_HEAD^{commit}')
+        if not worktree.exists():
+            if git(repo, 'for-each-ref', '--format=%(refname)', ref):
+                raise ValueError('Feature branch is already claimed: ' + branch)
+            git(repo, 'worktree', 'add', '-b', branch, str(worktree), base)
+        if git(worktree, 'branch', '--show-current') != branch:
+            raise ValueError('The feature worktree belongs to another branch.')
+        record['branch_base'] = git(worktree, 'rev-parse', 'HEAD')
+        save_config(context['issue_id'], record, DELEGATION_KEY)
+    if request['manual'] and not record.get('remote_reserved'):
+        if git(repo, 'ls-remote', 'origin', ref):
+            raise ValueError('Feature branch is already claimed: ' + branch)
+        git(repo, 'push', '--force-with-lease=' + ref + ':', 'origin', record['branch_base'] + ':' + ref)
+        record['remote_reserved'] = True
+        save_config(context['issue_id'], record, DELEGATION_KEY)
+    for key, value in {'git_repository': context['installed']['repository'], 'git_branch': branch,
+                       'git_parent_branch': parent_branch, 'git_base_commit': record['branch_base']}.items():
+        cli('issue', 'metadata', 'set', child['id'], '--key', key, '--value', value, '--type', 'string')
+    if request['manual'] and not has_manual(child):
+        labels = cli('label', 'list')
+        labels = labels.get('labels', []) if isinstance(labels, dict) else labels
+        label = next((label for label in labels if label['name'] == 'manual'), None)
+        label = label or cli('label', 'create', '--name', 'manual', '--color', '#64748b')
         cli('issue', 'label', 'add', child['id'], label['id'])
-    if 'main_thread_id' not in owned:
-        row = comment(context['issue_id'], block('dispatch', {'spec_id': spec_row['id'],
-                      'issue_id': binding['issue_id']}),
-                      args.thread or context['state'].get('reply_parent') or spec_row['id'])
-        owned['main_thread_id'] = row['id']
-        context['save_state']()
-    description = (binding['request'] + '\n\nScope: ' + binding['scope'] + '\n\nAcceptance: ' + binding['question'] +
-                   '\n\n' + '\n'.join('- ' + q for q in binding['questions']) + '\n\n' + entry_command('multica-featssship-develop-review') +
-                   '\n\nMAIN selected branch: ' + binding['branch'] + '. Developer and Reviewer use this existing branch '
-                   'in the shared issue folder from the start; '
-                   'do not create a review checkout or switch branches.\n\n' +
-                   block('binding', {key: config[key] for key in ('developer_id', 'reviewer_id', 'repository')} |
-                         {key: binding[key] for key in ('branch', 'test_command')}))
-    cli('issue', 'update', binding['issue_id'], '--description-stdin', '--no-start', input=description)
-    child = cli('issue', 'get', binding['issue_id'])
+    child_process = {'questions': [request['question'], *[q for q in selected['questions'] if q != request['question']]],
+                     'branch': branch, 'parent_branch': parent_branch, 'manual': request['manual']}
+    if 'sandbox' in process:
+        child_process['sandbox'] = process['sandbox']
+    save_config(child['id'], child_process, PROCESS_KEY)
+    description = (request['request'] + '\n\nScope: ' + request['scope'] + '\n\nAcceptance: ' + request['question'] +
+                   '\n\nUse the prepared feature worktree: ' + str(worktree) + '\n\nFollow the verification guidance in the project description.\n\n' +
+                   entry_command('multica-featssship-develop-review') + '\n\nMAIN selected branch: ' + branch +
+                   '. Developer and Reviewer use this existing branch in the shared issue folder from the start; '
+                   'do not create a review checkout or switch branches.')
+    cli('issue', 'update', child['id'], '--description-stdin', '--no-start', input=description)
     if child['status'] == 'backlog':
-        cli('issue', 'status', binding['issue_id'], 'todo')
-    return {'instruction': 'Dispatched; end this turn.'}
+        cli('issue', 'status', child['id'], 'todo')
+    record['dispatched'] = True
+    save_config(context['issue_id'], record, DELEGATION_KEY)
+    return {'instruction': 'Dispatched to ' + child['id'] + '; end this turn.'}
 
 
 workflow = Workflow(
-    State('drafting', 'Draft the delegation config from the request and available facts: behavior, scope, '
-          'acceptance and verification. Reuse answered decisions. Choose propose to inspect the draft.',
-          initial=True, precheck=configured, options=drafting_options),
-    # TODO: This is Agent-as-Middleware. More efficient SoP interact with human should
-    # hard stop agent, hijack the UI to the surface, and let human or any ouer entity
-    # directly filling the param needed for next. This should be a part of remote
-    # SoP calling in the future.
-    State('grilling', 'Inspect the draft for clarity. If a point is unclear, ask the human one question '
-          'with a recommended answer and end this turn. After their reply, use edit to patch only that point; '
-          'repeat one question at a time. All edit fields are optional; supply exactly one. '
-          'Otherwise choose dispatch directly.', precheck=configured, options=(
-        Option('edit', 'grilling', 'After the human answers one question, patch one point using one optional flag: '
-               + ', '.join(param.flag for param in EDIT_PARAMS), edit,
-               params=EDIT_PARAMS),
-        Option('dispatch', 'finished', 'Delegate the draft with its configured feature binding.', dispatch),
+    State('grilling', PROMPT, initial=True, precheck=configured, view=view, options=(
+        Option('edit', 'grilling', 'Update only the settings that need changing.', edit,
+               params=(Parameter('--patch', 'JSON merge patch for the request config'),)),
+        Option('dispatch', 'finished', 'Dispatch the settled config; retries resume the same child.', dispatch),
     )),
     State('finished', 'MAIN waits for one verified result from the feature issue.', final=True),
-    params=(Parameter('--thread', 'Native MAIN trigger comment UUID', required=False),
-            Parameter('--spec', 'Existing draft comment UUID to reopen after completion', required=False)),
+    params=(Parameter('--thread', 'Native request/trigger comment UUID; a new request needs a new thread', required=False),
+            Parameter('--config', 'Initial request config JSON; omit when resuming or editing', required=False)),
 )

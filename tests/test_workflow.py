@@ -11,7 +11,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from common import comment, feature_branch, unpack
+from common import INSTALLATION_KEY, PROCESS_KEY, comment, feature_branch, installation_config, process_config, unpack
 
 
 class DeliveryRoutingTests(unittest.TestCase):
@@ -60,7 +60,7 @@ class WorkflowFixture(unittest.TestCase):
         (self.repo / 'message.txt').write_text('baseline\n')
         self.commit('baseline')
         self.call('git', 'push', 'origin', 'main')
-        self.ids = {name: str(uuid.uuid4()) for name in ('workspace', 'project', 'root', 'main', 'runtime', 'assigner')}
+        self.ids = {name: str(uuid.uuid4()) for name in ('workspace', 'project', 'root', 'main', 'runtime', 'installer')}
         self.db_path = self.base / 'native.json'
         db = {'workspace_id': self.ids['workspace'], 'calls': [], 'agents': {
             self.ids['main']: {'id': self.ids['main'], 'runtime_id': self.ids['runtime'], 'workspace_id': self.ids['workspace'],
@@ -68,12 +68,14 @@ class WorkflowFixture(unittest.TestCase):
             'skills': {}, 'bindings': {}, 'projects': {self.ids['project']: {'id': self.ids['project'],
             'workspace_id': self.ids['workspace'], 'description': 'Existing project context.'}},
             'issues': {self.ids['root']: {'id': self.ids['root'], 'workspace_id': self.ids['workspace'],
-            'creator_type': 'member', 'creator_id': self.ids['assigner'],
-            'project_id': self.ids['project'], 'title': 'Existing shipping root', 'description': 'Existing root context.',
+            'project_id': self.ids['project'], 'title': 'MAIN DEV: Existing shipping root', 'description': 'Existing root context.',
             'assignee_id': self.ids['main'], 'assignee_type': 'agent', 'status': 'in_progress', 'labels': [], 'metadata': {'unrelated': 'preserve'}}}, 'comments': [],
             'github_calls': [], 'github': {'url': 'https://github.com/owner/requests/issues/42',
             'title': 'Ship the message', 'body': 'Requirement: write shipped. Verification: read message.txt.',
             'state': 'OPEN', 'comments': [], 'remote': str(self.remote)}}
+        db['issues'][self.ids['installer']] = {**db['issues'][self.ids['root']],
+            'id': self.ids['installer'], 'title': 'Install shipping', 'metadata': {}}
+        db['issues'][self.ids['root']]['parent_issue_id'] = self.ids['installer']
         self.db_path.write_text(json.dumps(db))
         binaries = self.base / 'bin'
         binaries.mkdir()
@@ -81,13 +83,11 @@ class WorkflowFixture(unittest.TestCase):
         script.write_text('#!' + sys.executable + '\nimport runpy\nrunpy.run_path(' + repr(str(ROOT / 'tests/fake_multica.py')) + ", run_name='__main__')\n")
         script.chmod(0o755)
         self.env.update(PATH=str(binaries) + os.pathsep + os.environ['PATH'], FEATSSSHIP_FAKE_DB=str(self.db_path))
-        self.config_path = self.base / 'answers.json'
-        config = {'workspace_id': self.ids['workspace'], 'project_id': self.ids['project'], 'root_issue_id': self.ids['root'],
-                  'repository': str(self.remote), 'developer': {'name': 'Developer', 'runtime_id': self.ids['runtime'], 'model': 'fixture'},
+        config = {'repository': str(self.remote), 'delegator': {'name': 'Delegator', 'runtime_id': self.ids['runtime'], 'model': 'fixture', 'thinking_level': 'high'}, 'developer': {'name': 'Developer', 'runtime_id': self.ids['runtime'], 'model': 'fixture'},
                   'reviewer': {'name': 'Reviewer', 'runtime_id': self.ids['runtime'], 'model': 'fixture'},
-                  'directions': [{'name': 'message', 'branch_prefix': 'feat/messages', 'scope': 'message.txt', 'question': 'Does message.txt say shipped?',
+                  'directions': [{'name': 'message', 'branch_prefix': 'feat/messages', 'scope': 'message.txt', 'questions': ['Does message.txt say shipped?'],
                                   'test_command': 'python3 -c "from pathlib import Path; assert Path(\'message.txt\').exists()"'}]}
-        self.config_path.write_text(json.dumps(config))
+        self.write_answers(config)
 
     def call(self, *words, cwd=None, env=None, ok=True):
         process = subprocess.run(words, cwd=cwd or self.repo, env=env or self.env, text=True, capture_output=True, input='')
@@ -103,6 +103,14 @@ class WorkflowFixture(unittest.TestCase):
     def db(self):
         return json.loads(self.db_path.read_text())
 
+    def read_answers(self):
+        return installation_config(self.db()['issues'][self.ids['installer']])
+
+    def write_answers(self, config):
+        db = self.db()
+        db['issues'][self.ids['installer']]['metadata'][INSTALLATION_KEY] = json.dumps(config)
+        self.db_path.write_text(json.dumps(db))
+
     def record(self, kind, issue=None):
         for row in reversed(self.db()['comments']):
             if row['issue_id'] == (issue or self.feature_id):
@@ -111,14 +119,37 @@ class WorkflowFixture(unittest.TestCase):
                     return data, row
         self.fail('Missing native record: ' + kind)
 
+    def installer(self, *args, ok=True):
+        env = {**self.env, 'MULTICA_ISSUE_ID': self.ids['installer'],
+               'MULTICA_AGENT_ID': self.ids['main'], 'MULTICA_WORKSPACE_ID': self.ids['workspace']}
+        result = self.call(sys.executable, str(ROOT / 'install.py'), *args, env=env, ok=ok)
+        return json.loads(result.stdout)
+
+    def installation_reply(self, content='confirm', *, author='member', parent=None):
+        db = self.db()
+        parent = parent or next(row['id'] for row in reversed(db['comments'])
+                                if unpack(row['content'], 'installation-config'))
+        row = {'id': str(uuid.uuid4()), 'issue_id': self.ids['installer'], 'parent_id': parent,
+               'author_type': author, 'author_id': str(uuid.uuid4()), 'content': content}
+        db['comments'].append(row)
+        self.db_path.write_text(json.dumps(db))
+        return row['id']
+
     def install(self):
-        result = self.call(sys.executable, str(ROOT / 'install.py'), '--config', str(self.config_path))
-        self.config = json.loads(self.config_path.read_text())
+        if self.installer()['status'] != 'finished':
+            self.installer('edit', '--patch', '{}')
+            self.installation_reply()
+            self.assertEqual(self.installer('confirmed')['status'], 'finished')
+        audit = self.read_answers()
+        root = next(row for row in self.db()['issues'].values() if row.get('parent_issue_id') == self.ids['installer'] and row['title'].startswith('MAIN DEV:'))
+        self.ids['root'] = root['id']
+        self.config = {**audit, 'root_issue_id': root['id'],
+                       **{key: audit['installed_' + key] for key in ('delegator_id', 'developer_id', 'reviewer_id', 'feature_skill_id', 'delegation_skill_id')}}
         self.root_package = self.repo / '.agents/skills' / ('multica-featssship-' + self.ids['project'][:8])
         self.developer = self.repo / '.agents/skills/multica-featssship-develop-review'
         from packages import build
         self.reviewer = build('feature', self.base / 'reviewer-skill')
-        return json.loads(result.stdout)
+        return self.config
 
     def invoke(self, package, *args, role='developer', issue=None, task=None, trigger=None, ok=True, plain=False):
         self.task = task or str(uuid.uuid4())
@@ -135,38 +166,26 @@ class WorkflowFixture(unittest.TestCase):
             self.assertNotIn('error', output, output)
         return output
 
-    def propose(self, *, github=False, mirror=False, question='Does message.txt say shipped?'):
-        task = str(uuid.uuid4())
-        self.invoke(self.root_package, role='main', issue=self.ids['root'], task=task)
-        title = 'Message: ship requested text'
+    def configure_delegation(self, *, github=False, mirror=False, question='Does message.txt say shipped?'):
+        config = {'name': 'ship-message', 'request': 'Write shipped in message.txt.',
+                  'direction': 'message', 'scope': 'message.txt', 'question': question}
         if mirror:
-            title = '[' + title + '](' + self.db()['github']['url'] + ')'
-        options = ['--title', title] if mirror else []
+            config['title'] = '[Message: ship requested text](' + self.db()['github']['url'] + ')'
         if github:
-            options += ['--github-issue', self.db()['github']['url']]
-        output = self.invoke(self.root_package, 'propose', '--name', 'ship-message', '--request', 'Write shipped in message.txt.',
-                             '--direction', 'message', '--scope', 'message.txt', '--question', question,
-                             *options, role='main', issue=self.ids['root'], task=task)
-        self.spec_id = self.record('spec', self.ids['root'])[1]['id']
-        return task
+            config['github_issue'] = self.db()['github']['url']
+        self.invoke(self.root_package, '--config', json.dumps(config), role='delegator', issue=self.ids['root'])
 
-    def ask_and_reply(self, question, answer):
-        db = self.db()
-        asked = {'id': str(uuid.uuid4()), 'issue_id': self.ids['root'], 'parent_id': self.spec_id,
-                 'author_type': 'agent', 'author_id': self.ids['main'], 'content': question}
-        reply = {'id': str(uuid.uuid4()), 'issue_id': self.ids['root'], 'parent_id': asked['id'],
-                 'author_type': 'member', 'author_id': str(uuid.uuid4()), 'content': answer}
-        db['comments'].extend((asked, reply))
-        self.db_path.write_text(json.dumps(db))
-        return reply['id']
+    def delegation(self):
+        return installation_config(self.db()['issues'][self.ids['root']], 'featssship.delegation')
 
     def dispatch(self, *, github=False, mirror=False, question='Does message.txt say shipped?'):
-        task = self.propose(github=github, mirror=mirror, question=question)
-        output = self.invoke(self.root_package, 'dispatch', role='main', issue=self.ids['root'], task=task)
-        self.feature_id = self.record('dispatch', self.ids['root'])[0]['issue_id']
-        self.binding = unpack(self.db()['issues'][self.feature_id]['description'], 'binding')
-        # Model the already-bound issue checkout, not worker-side branch setup.
-        self.call('git', 'switch', '-c', self.binding['branch'], 'origin/main')
+        self.configure_delegation(github=github, mirror=mirror, question=question)
+        output = self.invoke(self.root_package, 'dispatch', role='delegator', issue=self.ids['root'])
+        self.feature_id = self.delegation()['issue_id']
+        self.binding = process_config(self.db()['issues'][self.feature_id])
+        self.root_repo = self.repo
+        common = self.call('git', 'rev-parse', '--path-format=absolute', '--git-common-dir').stdout.strip()
+        self.repo = Path(common) / 'featsship' / self.feature_id
         return output
 
     def state(self, issue=None, package=None):
@@ -192,19 +211,25 @@ class WorkflowFixture(unittest.TestCase):
         result = self.invoke(self.reviewer, verdict, '--finding',
                            'Acceptance, necessary additions and scope verified.' if verdict == 'approve' else
                            'Replace almost with shipped.', role='reviewer', plain=True)
-        self.assertEqual(result.stdout, 'Delivery/review/work done this round, exit directly and silently\n')
+        manual = self.state()['status'] == 'manual_approve'
+        expected = ('Auto review pass, directly and silently exit until superior instruction, if outer confirmation has not been received yet.' if manual else
+                    'Rework sent, directly and silently exit' if verdict == 'rework' else
+                    'Delivery/review/work done this round, exit directly and silently')
+        self.assertEqual(result.stdout, expected + '\n')
         self.assertEqual(result.stderr, '')
-        self.assert_delivery(before, self.config['developer_id'], self.feature_id)
+        if not manual:
+            self.assert_delivery(before, self.config['developer_id'], self.feature_id)
         return self.state()['output']
 
-    def integrate(self):
+    def finish(self):
         self.invoke(self.developer)
         before = len(self.db()['comments'])
-        result = self.invoke(self.developer, 'integrate', plain=True)
+        result = self.invoke(self.developer, 'finish', plain=True)
+        self.repo = self.root_repo
         self.assertEqual(result.stdout, 'Delivery/review/work done this round, exit directly and silently\n')
         self.assertEqual(result.stderr, '')
         self.assertEqual(self.state(), {})
-        self.assert_delivery(before, self.config['main_id'], self.ids['root'])
+        self.assert_delivery(before, self.config['delegator_id'], self.ids['root'])
 
     def assert_delivery(self, before, recipient, issue):
         rows = self.db()['comments'][before:]
@@ -237,15 +262,18 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(set(self.db()['agents']), set(first['agents']))
         self.assertEqual(set(self.db()['skills']), set(first['skills']))
         self.assertEqual(len(first['skills']), 2)
+        audit = self.read_answers()
+        audit['directions'][0]['test_command'] = 'false'
+        self.write_answers(audit)
         self.dispatch()
-        self.assertEqual(set(self.binding), {'developer_id', 'reviewer_id', 'repository', 'branch', 'test_command'})
+        self.assertEqual(set(self.binding), {'questions', 'branch', 'parent_branch', 'manual'})
         self.assertEqual(self.binding['branch'], 'feat/messages/ship-message')
-        self.assertEqual(self.call('git', 'ls-remote', '--heads', 'origin', 'featssship/*').stdout, '')
+        self.assertEqual(self.call('git', 'ls-remote', '--heads', 'origin', self.binding['branch']).stdout, '')
         for role in ('developer', 'reviewer'):
             self.assertIn(self.config['feature_skill_id'], self.db()['bindings'][self.config[role + '_id']])
         initial = self.invoke(self.developer)
         self.assertEqual(initial['status'], 'develop')
-        self.assertEqual(len(initial['next_step']), 2)  # submit and quit, not prepare.
+        self.assertEqual(len(initial['next_step']), 3)  # submit, cancel and quit; no prepare.
         before = self.state()
         for event in ('init', 'quit'):
             denied = self.invoke(self.reviewer, *([] if event == 'init' else [event]), role='reviewer', ok=False, plain=True)
@@ -266,10 +294,10 @@ class WorkflowFixture(unittest.TestCase):
         commit = self.submit('shipped')
         self.assertNotEqual(first_commit, commit)
         self.advance_main('other.txt', 'Concurrent safe change\n')
-        self.assertEqual(self.review('approve')['status'], 'integrate')
+        self.assertEqual(self.review('approve')['status'], 'finished')
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'baseline\n')
         self.assertEqual(self.parent_notes(), [])
-        self.integrate()
+        self.finish()
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'shipped\n')
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:other.txt').stdout, 'Concurrent safe change\n')
         self.assertEqual(len(self.parent_notes()), 1)
@@ -278,7 +306,7 @@ class WorkflowFixture(unittest.TestCase):
         self.assertNotIn('sop.' + self.root_package.name, self.db()['issues'][self.ids['root']]['metadata'])
         self.assertEqual(self.db()['issues'][self.ids['root']]['metadata']['unrelated'], 'preserve')
         self.assertEqual(len(self.call('git', 'worktree', 'list', '--porcelain').stdout.split('worktree ')), 2)
-        self.assertEqual(self.call('git', 'branch', '--show-current').stdout.strip(), self.binding['branch'])
+        self.assertEqual(self.call('git', 'branch', '--show-current').stdout.strip(), 'main')
         self.assertLessEqual(self.db()['peak_metadata_bytes'], 8192)
         self.assertEqual(self.invoke(self.developer, plain=True).stdout,
                          'Delivery/review/work done this round, exit directly and silently\n')
@@ -290,18 +318,26 @@ class WorkflowFixture(unittest.TestCase):
         self.db_path.write_text(json.dumps(db))
         self.install(); self.dispatch(); self.submit('shipped')
         self.assertEqual(self.db()['issues'][self.feature_id]['labels'], [{'id': 'manual-label', 'name': 'manual'}])
-        self.assertEqual(self.review('approve')['status'], 'integrate')
-        self.integrate()
-        self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'baseline\n')
-        self.assertIn('Manual check required', self.parent_notes()[0])
+        self.assertEqual(self.review('approve')['status'], 'manual_approve')
+        db = self.db()
+        approval = {'id': str(uuid.uuid4()), 'issue_id': self.feature_id, 'parent_id': self.state()['manual_comment_id'],
+                    'author_type': 'member', 'author_id': str(uuid.uuid4()), 'content': 'approve'}
+        db['comments'].append(approval); self.db_path.write_text(json.dumps(db))
+        self.invoke(self.developer, '--thread', approval['id'])
+        self.invoke(self.developer, 'approve', '--thread', approval['id'], '--finding', 'Superior approved.')
+        self.finish()
+        self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'shipped\n')
+        self.assertIn('Merged ', self.parent_notes()[0])
         self.assertEqual(self.state(), {})
 
     def test_main_named_branch_guards_and_competing_first_push(self):
+        db = self.db(); db['issues'][self.ids['root']]['labels'] = [{'id': 'manual-label', 'name': 'manual'}]
+        self.db_path.write_text(json.dumps(db))
         self.install(); self.dispatch()
         self.invoke(self.developer)
         (self.repo / 'message.txt').write_text('shipped\n')
         self.commit('shipped')
-        self.call('git', 'switch', 'main')
+        self.call('git', 'switch', '-c', 'wrong-branch', 'origin/main')
         denied = self.invoke(self.developer, 'submit', '--summary', 'wrong branch', plain=True, ok=False)
         self.assertIn('one feature branch selected by MAIN', denied.stdout)
         self.call('git', 'switch', self.binding['branch'])
@@ -313,19 +349,21 @@ class WorkflowFixture(unittest.TestCase):
         denied = self.invoke(self.developer, 'submit', '--summary', 'wrong repository', plain=True, ok=False)
         self.assertIn('configured target repository', denied.stdout)
         self.call('git', 'remote', 'set-url', 'origin', str(self.remote))
-        # Another issue claimed the short name before submission: do not overwrite it.
-        self.call('git', 'push', 'origin', 'main:refs/heads/' + self.binding['branch'])
+        # A competing writer changed the reserved branch: do not overwrite it.
+        competitor = self.call('git', '--git-dir', str(self.remote), 'commit-tree', 'main^{tree}', '-p', 'main', '-m', 'competing write').stdout.strip()
+        self.call('git', '--git-dir', str(self.remote), 'update-ref', 'refs/heads/' + self.binding['branch'], competitor)
         denied = self.invoke(self.developer, 'submit', '--summary', 'name collision', plain=True, ok=False)
         self.assertIn('stale info', denied.stdout)
         self.assertEqual(self.call('git', 'ls-remote', 'origin', self.binding['branch']).stdout.split()[0],
-                         self.call('git', 'rev-parse', 'main').stdout.strip())
-        self.call('git', 'push', 'origin', ':refs/heads/' + self.binding['branch'])
+                         competitor)
+        self.call('git', '--git-dir', str(self.remote), 'update-ref', 'refs/heads/' + self.binding['branch'],
+                  self.db()['issues'][self.feature_id]['metadata']['git_base_commit'])
         self.invoke(self.developer, 'submit', '--summary', 'shipped', plain=True)
         self.call('git', 'switch', '-c', 'other-feature')
         denied = self.invoke(self.reviewer, 'approve', '--finding', 'wrong branch', role='reviewer', plain=True, ok=False)
         self.assertIn('one feature branch selected by MAIN', denied.stdout)
         self.call('git', 'switch', self.binding['branch'])
-        self.assertEqual(self.review('approve')['status'], 'integrate')
+        self.assertEqual(self.review('approve')['status'], 'manual_approve')
 
     def test_changed_revision_rejected(self):
         self.install(); self.dispatch(); self.submit('shipped')
@@ -338,85 +376,166 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(self.state()['commit'], before)
 
     def test_install_rejects_self_review(self):
-        config = json.loads(self.config_path.read_text())
-        config.update(developer_id=self.ids['main'], reviewer_id=self.ids['main'])
-        self.config_path.write_text(json.dumps(config))
-        result = self.call(sys.executable, str(ROOT / 'install.py'), '--config', str(self.config_path), ok=False)
-        self.assertNotEqual(result.returncode, 0)
+        config = self.read_answers()
+        config['developer']['id'] = config['reviewer']['id'] = self.ids['main']
+        self.write_answers(config)
+        self.installer()
+        self.installer('edit', '--patch', '{}')
+        reply = self.installation_reply()
+        result = self.installer('--thread', reply, 'confirmed', ok=False)
+        self.assertIn('distinct MAIN', result['error']['message'])
         self.assertEqual(len(self.db()['agents']), 1)
 
     def test_install_creates_own_main_child_and_reuses_it(self):
-        config = json.loads(self.config_path.read_text())
-        for key in ('root_issue_id', 'workspace_id', 'project_id'):
-            config.pop(key)
-        for role in ('developer', 'reviewer'):
-            config[role].pop('model')
-        self.config_path.write_text(json.dumps(config))
-        self.env.update(MULTICA_ISSUE_ID=self.ids['root'], MULTICA_AGENT_ID=self.ids['main'])
+        legacy = self.read_answers()
+        legacy['main'] = legacy.pop('delegator')
+        self.write_answers(legacy)
+        old_root = self.ids['root']
+        db = self.db()
+        del db['issues'][old_root]
+        self.db_path.write_text(json.dumps(db))
         result = self.install()
+        self.assertIn('delegator', self.read_answers())
+        self.assertNotIn('main', self.read_answers())
+        self.assertIn('installed_delegator_id', self.read_answers())
+        self.assertNotIn('installed_main_id', self.read_answers())
         child = self.db()['issues'][result['root_issue_id']]
-        self.assertNotEqual(child['id'], self.ids['root'])
-        self.assertEqual(child['parent_issue_id'], self.ids['root'])
+        self.assertNotEqual(child['id'], old_root)
+        self.assertEqual(child['parent_issue_id'], self.ids['installer'])
         self.assertEqual(child['status'], 'backlog')
         self.assertTrue(child['title'].startswith('MAIN DEV:'))
-        self.assertEqual(self.config['assigner_id'], self.ids['assigner'])
-        self.assertEqual(self.db()['subscribers'][child['id']], [self.ids['assigner']])
-        main = self.db()['agents'][self.config['main_id']]
+        main = self.db()['agents'][self.config['delegator_id']]
         self.assertNotEqual(main['id'], self.ids['main'])
         self.assertEqual((main['runtime_id'], main['model'], main['thinking_level']),
                          (self.ids['runtime'], 'fixture', 'high'))
         self.assertIn(self.config['delegation_skill_id'], self.db()['bindings'][main['id']])
-        for role in ('developer', 'reviewer'):
-            actor = self.db()['agents'][self.config[role + '_id']]
-            self.assertEqual((actor['model'], actor['thinking_level']), ('cliproxyapi/gpt-6-luna', 'high'))
         before = self.db()
         self.assertEqual(self.install()['root_issue_id'], child['id'])
         self.assertEqual(set(self.db()['issues']), set(before['issues']))
         self.assertEqual(set(self.db()['agents']), set(before['agents']))
-        self.assertEqual(self.db()['subscribers'][child['id']], [self.ids['assigner']])
+        # A confirmed continuation finds MAIN through children and reuses proven IDs.
+        db = self.db()
+        db['issues'][self.ids['installer']]['status'] = 'in_progress'
+        self.db_path.write_text(json.dumps(db))
+        self.assertEqual(self.install()['root_issue_id'], child['id'])
+        self.assertEqual(set(self.db()['issues']), set(before['issues']))
+        self.assertEqual(set(self.db()['agents']), set(before['agents']))
         self.assertFalse(any(call[:2] == ['issue', 'list'] for call in self.db()['calls']))
 
-    def test_install_asks_one_self_contained_question_then_resumes(self):
-        self.config_path.write_text('{}')
-        self.env.update(MULTICA_ISSUE_ID=self.ids['root'], MULTICA_AGENT_ID=self.ids['main'])
-        def resume():
-            result = self.call(sys.executable, str(ROOT / 'install.py'), '--config', str(self.config_path))
-            output = json.loads(result.stdout)
-            self.assertEqual(output['status'], 'needs_input')
-            self.assertEqual(len(self.db()['issues']), 1)
-            self.assertEqual(len(self.db()['agents']), 1)
-            return output
-        first = resume()
-        self.assertEqual(first['field'], 'repository')
-        self.assertIn('Which target repository needs featssship?', first['question'])
-        self.assertNotIn('MAIN root', first['question'])
-        config = json.loads(self.config_path.read_text())
-        config['repository'] = str(self.remote)
-        self.config_path.write_text(json.dumps(config))
-        self.assertEqual(resume()['field'], 'direction_count')
-        config['direction_count'] = 1
-        self.config_path.write_text(json.dumps(config))
-        self.assertEqual(resume()['field'], 'directions.0.name')
-        config = json.loads(self.config_path.read_text())
-        config['directions'][0]['name'] = 'frontend'
-        self.config_path.write_text(json.dumps(config))
-        question = resume()
-        self.assertEqual(question['field'], 'directions.0.scope')
-        self.assertIn(str(self.remote), question['question'])
-        self.assertIn('frontend', question['question'])
-        self.assertEqual(resume(), question)
-        config = json.loads(self.config_path.read_text())
-        config['directions'][0]['scope'] = 'src/frontend'
-        self.config_path.write_text(json.dumps(config))
-        question = resume()
-        self.assertEqual(question['field'], 'directions.0.question')
-        self.assertIn('src/frontend', question['question'])
-        config['directions'][0]['question'] = 'Can users collapse a tree branch?'
-        self.config_path.write_text(json.dumps(config))
-        question = resume()
-        self.assertEqual(question['field'], 'directions.0.test_command')
-        self.assertIn('src/frontend', question['question'])
-        self.assertIn('Can users collapse a tree branch?', question['question'])
+    def test_install_edits_complete_config_then_requires_latest_human_confirmation(self):
+        seed = self.read_answers()
+        self.write_answers({})
+        db = self.db()
+        trigger = str(uuid.uuid4())
+        db['comments'].append({'id': trigger, 'issue_id': self.ids['installer'], 'parent_id': None,
+                              'author_type': 'member', 'author_id': 'human', 'content': 'Configure installation.'})
+        self.db_path.write_text(json.dumps(db))
+        initial = self.installer('--thread', trigger)
+        self.assertIn('"delegator":', initial['instruction'])
+        self.assertNotIn('"main":', initial['instruction'])
+        confirm_choice = initial['next_step'][1]['instruction']
+        self.assertIn('human replies confirm', confirm_choice)
+        self.assertNotIn('--thread', confirm_choice)
+        self.assertEqual(initial['status'], 'grilling')
+        self.assertIn('workflow', initial['instruction'])
+        self.assertNotIn('one edit', initial['instruction'])
+        self.assertNotIn('this SoP', initial['instruction'])
+        self.assertIn('Current config:', initial['instruction'])
+        self.assertIn('runtime/model', initial['instruction'])
+        self.assertIn('"scope": "."', initial['instruction'])
+        self.assertEqual([step['command'].split()[2] for step in initial['next_step']],
+                         ['edit', 'confirmed', 'quit'])
+        patch = {key: seed[key] for key in ('repository', 'directions')}
+        edited = self.installer('edit', '--patch', json.dumps(patch))
+        self.assertIn('Edit finished. Directly and silently exit if outer confirmation has not been received yet.', edited['instruction'])
+        config, row = self.record('installation-config', self.ids['installer'])
+        self.assertEqual(row['parent_id'], trigger)
+        self.assertEqual(config['directions'], seed['directions'])
+        self.assertTrue(row['content'].endswith('Edit or confirm.'))
+        self.assertEqual(installation_config(self.db()['issues'][self.ids['installer']]), config)
+        self.assertEqual(installation_config(self.db()['issues'][self.ids['root']]), {})
+        self.assertEqual(len(self.db()['agents']), 1)
+        self.assertEqual(len(self.db()['skills']), 0)
+        self.assertIn('human must reply', self.installer('confirmed', ok=False)['error']['message'])
+        agent_reply = self.installation_reply(author='agent')
+        self.assertIn('human must reply', self.installer('--thread', agent_reply, 'confirmed', ok=False)['error']['message'])
+        old_reply = self.installation_reply()
+        self.installer('--thread', old_reply, 'edit', '--patch', '{"developer":{"name":"New Developer"}}')
+        self.assertIn('human must reply', self.installer('--thread', old_reply, 'confirmed', ok=False)['error']['message'])
+        # A different native task must retain issue-owned edits without a local answers file.
+        self.assertIn('New Developer', self.installer()['instruction'])
+        self.installation_reply()
+        self.installation_reply('Wait, change the config first.')
+        self.assertIn('human must reply', self.installer('confirmed', ok=False)['error']['message'])
+        self.installation_reply()
+        finished = self.installer('confirmed')
+        self.assertEqual(finished['status'], 'finished')
+        config = installation_config(self.db()['issues'][self.ids['installer']])
+        main = next(row for row in self.db()['issues'].values() if row.get('parent_issue_id') == self.ids['installer'] and row['title'].startswith('MAIN DEV:'))
+        self.assertEqual(installation_config(main), {})
+        self.assertEqual(process_config(main), {'manual': False, 'directions': {'message': {key: seed['directions'][0][key] for key in ('questions', 'branch_prefix')}}})
+        self.assertTrue({'installed_delegator_id', 'installed_developer_id', 'installed_reviewer_id', 'installed_workspace_id', 'installed_project_id'} <= config.keys())
+        self.assertFalse({'root_issue_id', 'installation_issue_id', 'workspace_id', 'project_id'} & config.keys())
+        self.assertIn('CEO', self.db()['subscribers'][main['id']])
+        self.assertEqual(self.db()['issues'][self.ids['installer']]['status'], 'done')
+        self.assertEqual(main['status'], 'in_progress')
+        self.assertNotIn(seed['directions'][0]['questions'][0], self.db()['projects'][self.ids['project']]['description'])
+        before = self.db()
+        self.assertEqual(self.installer()['status'], 'finished')
+        self.assertEqual(set(self.db()['issues']), set(before['issues']))
+        self.assertEqual(set(self.db()['agents']), set(before['agents']))
+
+    def test_install_removes_only_legacy_description_block_and_main_reads_metadata(self):
+        db = self.db()
+        legacy = ('\n\n<!-- featssship:installation -->\n'
+                  'Acceptance: Does message.txt exactly match the requested message format?\n'
+                  '<!-- /featssship:installation -->')
+        db['projects'][self.ids['project']]['description'] += legacy + '\nKeep this footer.'
+        db['issues'][self.ids['root']]['description'] += legacy
+        self.db_path.write_text(json.dumps(db))
+        answers = self.read_answers()
+        answers['directions'].append({'name': 'other', 'scope': 'other/', 'test_command': 'true',
+                                      'questions': ['Only the other direction sees this question.'], 'branch_prefix': 'feat/other'})
+        self.write_answers(answers)
+        self.install()
+        db = self.db()
+        self.assertTrue(db['projects'][self.ids['project']]['description'].startswith('Existing project context.'))
+        self.assertIn('Keep this footer.', db['projects'][self.ids['project']]['description'])
+        self.assertNotIn('Acceptance:', db['projects'][self.ids['project']]['description'])
+        main = db['issues'][self.ids['root']]
+        self.assertNotIn('Acceptance:', main['description'])
+        self.assertIn(str(self.root_package / 'wrapper.py'), main['description'])
+        self.assertEqual(main['metadata']['unrelated'], 'preserve')
+        self.assertEqual(main['status'], 'in_progress')
+        self.assertEqual(main['title'], 'MAIN DEV: Existing shipping root')
+        self.assertFalse((self.root_package / 'installation.json').exists())
+        self.assertFalse((ROOT / '.multica/featssship/installer/installation.json').exists())
+        self.assertEqual(set(process_config(main)['directions']['message']), {'questions', 'branch_prefix'})
+        process = process_config(main)
+        process['sandbox'] = {'policy': 'inherited-native-policy'}
+        db['issues'][self.ids['root']]['metadata'][PROCESS_KEY] = json.dumps(process)
+        self.db_path.write_text(json.dumps(db))
+        output = self.invoke(self.root_package, '--config', json.dumps({'name': 'ship-message', 'request': 'Write shipped.',
+                            'direction': 'message'}), role='delegator', issue=self.ids['root'])
+        spec = json.loads(output['instruction'].split('Current config:\n')[1])
+        self.assertEqual(spec['scope'], self.config['directions'][0]['scope'])
+        self.assertNotIn('test_command', spec)
+        self.assertEqual(spec['question'], self.config['directions'][0]['questions'][0])
+        self.invoke(self.root_package, 'dispatch', role='delegator', issue=self.ids['root'])
+        child = self.db()['issues'][self.delegation()['issue_id']]
+        self.assertIn('Acceptance: ' + spec['question'], child['description'])
+        self.assertNotIn('Verification command:', child['description'])
+        self.assertEqual(child['metadata']['git_branch'], 'feat/messages/ship-message')
+        self.assertEqual(self.call('git', 'rev-parse', child['metadata']['git_branch']).stdout.strip(),
+                         child['metadata']['git_base_commit'])
+        self.assertNotIn('test_command', self.delegation()['config'])
+        process = process_config(child)
+        self.assertEqual(set(process), {'questions', 'branch', 'parent_branch', 'sandbox', 'manual'})
+        self.assertEqual(process['questions'], self.config['directions'][0]['questions'])
+        self.assertEqual(process['parent_branch'], 'main')
+        self.assertEqual(process['sandbox'], {'policy': 'inherited-native-policy'})
+        self.assertNotIn('Only the other direction', json.dumps(process))
+        self.assertNotIn('featssship:binding', child['description'])
 
     def test_install_preserves_unrelated_main_skill(self):
         db = self.db()
@@ -429,56 +548,59 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(self.db()['skills'][skill_id], db['skills'][skill_id])
         self.assertEqual(len(self.db()['skills']), 3)
 
-    def test_one_point_grilling_and_cross_task_dispatch_recovery(self):
+    def test_grilling_metadata_and_cross_task_dispatch_recovery(self):
         self.install()
-        task = self.propose(github=True)
-        self.assertEqual(len(self.db()['issues']), 1)
-        self.assertEqual(self.db()['github_calls'], [])
-        inspected = self.invoke(self.root_package, role='main', issue=self.ids['root'], task=task)
-        self.assertEqual(inspected['status'], 'grilling')
-        self.assertEqual([step['command'].split()[-1] for step in inspected['next_step']], ['edit', 'dispatch'])
-        original = unpack(next(row for row in self.db()['comments'] if row['id'] == self.spec_id)['content'], 'spec')
-        for flags in ((), ('--question', 'New question?', '--scope', 'new scope'), ('--question', '')):
-            denied = self.invoke(self.root_package, 'edit', *flags, role='main', issue=self.ids['root'], task=task, ok=False)
-            self.assertIn('error', denied)
-        self.assertEqual(len([row for row in self.db()['comments'] if unpack(row['content'], 'spec')]), 1)
-        reply_id = self.ask_and_reply('Should acceptance inspect the first line?', 'Yes, inspect the first line.')
-        task = str(uuid.uuid4())
-        self.invoke(self.root_package, '--thread', reply_id, '--spec', self.spec_id,
-                    role='main', issue=self.ids['root'], task=task)
-        reopened = self.invoke(self.root_package, role='main', issue=self.ids['root'], task=task)
-        self.assertEqual(self.record('spec', self.ids['root'])[0], original)
-        self.assertEqual(reopened['status'], 'grilling')
-        revised = self.invoke(self.root_package, 'edit', '--question', 'Does the first line say shipped?',
-                              role='main', issue=self.ids['root'], task=task, trigger=reply_id)
-        self.assertEqual(revised['status'], 'grilling')
-        spec, row = self.record('spec', self.ids['root'])
-        self.assertEqual(spec, {**original, 'question': 'Does the first line say shipped?'})
-        self.spec_id = row['id']
-        reply_id = self.ask_and_reply('Should scope include its focused tests?', 'Yes.')
-        self.invoke(self.root_package, '--thread', reply_id, role='main', issue=self.ids['root'], task=task)
-        revised = self.invoke(self.root_package, 'edit', '--scope', 'message.txt and its focused tests',
-                              role='main', issue=self.ids['root'], task=task, trigger=reply_id)
-        spec, row = self.record('spec', self.ids['root'])
-        self.assertEqual(spec, {**original, 'question': 'Does the first line say shipped?',
-                               'scope': 'message.txt and its focused tests'})
-        self.spec_id = row['id']
-        dispatched = self.invoke(self.root_package, 'dispatch', role='main', issue=self.ids['root'], task=task,
-                                 trigger=reply_id)
-        feature_id = self.record('dispatch', self.ids['root'])[0]['issue_id']
-        binding = unpack(self.db()['issues'][feature_id]['description'], 'binding')
-        self.assertIn('Scope: message.txt and its focused tests', self.db()['issues'][feature_id]['description'])
-        self.assertIn('Acceptance: Does the first line say shipped?', self.db()['issues'][feature_id]['description'])
-        self.assertIn(self.config['feature_skill_id'], self.db()['bindings'][self.config['reviewer_id']])
-        self.assertEqual(self.db()['issues'][feature_id]['status'], 'todo')
-        self.assertNotIn('sop.' + self.root_package.name, self.db()['issues'][self.ids['root']]['metadata'])
-        task = str(uuid.uuid4())
-        self.invoke(self.root_package, '--thread', reply_id, '--spec', self.spec_id,
-                    role='main', issue=self.ids['root'], task=task)
-        self.invoke(self.root_package, 'propose', role='main', issue=self.ids['root'], task=task)
-        reused = self.invoke(self.root_package, 'dispatch', role='main', issue=self.ids['root'], task=task)
-        self.assertEqual(self.record('dispatch', self.ids['root'])[0]['issue_id'], feature_id)
+        # Partial first activation must remain editable, without a propose stage or child.
+        initial = self.invoke(self.root_package, '--config', '{"direction":"message"}',
+                              role='delegator', issue=self.ids['root'])
+        self.assertEqual(initial['status'], 'grilling')
+        initial_config = json.loads(initial['instruction'].split('Current config:\n')[1])
+        self.assertEqual(initial_config['direction'], 'message')
+        active = self.state(self.ids['root'], self.root_package)
+        self.assertEqual(active['status'], 'grilling')
+        self.assertEqual(active['delegation']['config'], {'direction': 'message'})
+        incomplete = self.invoke(self.root_package, 'dispatch', role='delegator', issue=self.ids['root'])
+        self.assertEqual(incomplete['status'], 'grilling')
+        self.assertEqual(json.JSONDecoder().raw_decode(incomplete['instruction'].split('Current config:\n')[1])[0], initial_config)
+        self.assertNotIn('issue_id', self.delegation())
         self.assertEqual(len(self.db()['issues']), 2)
+        patch = {'name': 'ship-message', 'request': 'Write shipped.', 'question': 'Does the first line say shipped?',
+                 'scope': 'message.txt and its focused tests'}
+        edited = self.invoke(self.root_package, 'edit', '--patch', json.dumps(patch),
+                             role='delegator', issue=self.ids['root'])
+        self.assertEqual(edited['status'], 'grilling')
+        self.assertEqual(json.loads(edited['instruction'].split('Current config:\n')[1]), {**initial_config, **patch})
+        saved = self.delegation()
+        self.assertEqual(saved['config'], {'direction': 'message', **patch})
+        self.invoke(self.root_package, '--help', role='delegator', issue=self.ids['root'], plain=True)
+        self.assertEqual(self.delegation(), saved)
+        # Comments are audit only: deleting them cannot lose the config or retry checkpoint.
+        db = self.db(); db['comments'] = []; self.db_path.write_text(json.dumps(db))
+        self.invoke(self.root_package, 'dispatch', role='delegator', issue=self.ids['root'])
+        feature_id = self.delegation()['issue_id']
+        child = self.db()['issues'][feature_id]
+        self.assertIn('Scope: message.txt and its focused tests', child['description'])
+        self.assertIn('Acceptance: Does the first line say shipped?', child['description'])
+        self.assertEqual(child['status'], 'todo')
+        self.assertEqual(self.delegation()['config'], saved['config'])
+        self.assertTrue(self.delegation()['dispatched'])
+        self.assertNotIn('sop.' + self.root_package.name, self.db()['issues'][self.ids['root']]['metadata'])
+        self.invoke(self.root_package, role='delegator', issue=self.ids['root'])
+        self.invoke(self.root_package, 'dispatch', role='delegator', issue=self.ids['root'])
+        self.assertEqual(self.delegation()['issue_id'], feature_id)
+        self.assertEqual(len(self.db()['issues']), 3)
+        self.invoke(self.root_package, '--thread', str(uuid.uuid4()), '--config',
+                    '{"name":"another-feature","request":"Another request."}', role='delegator', issue=self.ids['root'])
+        active = self.state(self.ids['root'], self.root_package)['delegation']
+        self.assertEqual(active['config']['name'], 'another-feature')
+        self.assertNotIn('issue_id', active)
+        self.assertEqual(self.delegation()['issue_id'], feature_id)
+        self.invoke(self.root_package, 'edit', '--patch', '{"name":"ship-message"}', role='delegator', issue=self.ids['root'])
+        denied = self.invoke(self.root_package, 'dispatch', role='delegator', issue=self.ids['root'], ok=False)
+        self.assertIn('already claimed', denied['error']['message'])
+        self.assertEqual(self.db()['issues'][self.delegation()['issue_id']]['status'], 'backlog')
+        self.assertEqual(self.call('git', 'rev-parse', 'feat/messages/ship-message').stdout.strip(),
+                         self.db()['issues'][feature_id]['metadata']['git_base_commit'])
 
 
 
