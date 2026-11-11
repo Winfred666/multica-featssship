@@ -72,7 +72,7 @@ def submit(args, context):
 def outer_confirmed(args, context):
     rows = cli('issue', 'comment', 'list', context['issue_id'], '--thread', args.thread or context['state']['manual_comment_id'], '--tail', '30')
     gate = next(row for row in rows if row['id'] == context['state']['manual_comment_id'])
-    main = cli('issue', 'get', context['issue']['parent_issue_id'])
+    main = cli('issue', 'get', context['binding']['main_issue_id'])
     outer = next((row for row in reversed(rows) if row['id'] == args.thread or
                   (not args.thread and (row.get('author_type') == 'member' or row.get('author_id') == main['assignee_id']))), None)
     if (not outer or rows.index(outer) <= rows.index(gate)
@@ -180,7 +180,7 @@ def finish(context):
             run('git', '--git-dir', str(common), 'branch', binding['branch'], state['integrated'])
             run('git', '--git-dir', str(common), 'worktree', 'add', str(repo), binding['branch'])
             return {'phase': 'develop', 'instruction': 'Parent push failed; restored the local branch/worktree for rework. Merge the latest parent, commit the resolution and submit again. ' + str(error)}
-    parent = context['issue']['parent_issue_id']
+    parent = context['binding']['main_issue_id']
     main = cli('issue', 'get', parent)
     comment(parent, mention(main['assignee_id']) +
             ' TODO: Review the [Feature](mention://issue/' + context['issue_id'] + ') result.\n\n' + note,

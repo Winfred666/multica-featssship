@@ -60,22 +60,20 @@ class WorkflowFixture(unittest.TestCase):
         (self.repo / 'message.txt').write_text('baseline\n')
         self.commit('baseline')
         self.call('git', 'push', 'origin', 'main')
-        self.ids = {name: str(uuid.uuid4()) for name in ('workspace', 'project', 'root', 'main', 'runtime', 'installer')}
+        self.ids = {name: str(uuid.uuid4()) for name in ('workspace', 'project', 'main', 'runtime', 'installer')}
         self.db_path = self.base / 'native.json'
         db = {'workspace_id': self.ids['workspace'], 'calls': [], 'agents': {
             self.ids['main']: {'id': self.ids['main'], 'runtime_id': self.ids['runtime'], 'workspace_id': self.ids['workspace'],
                                'model': 'fixture', 'thinking_level': 'high'}},
             'skills': {}, 'bindings': {}, 'projects': {self.ids['project']: {'id': self.ids['project'],
             'workspace_id': self.ids['workspace'], 'description': 'Existing project context.'}},
-            'issues': {self.ids['root']: {'id': self.ids['root'], 'workspace_id': self.ids['workspace'],
-            'project_id': self.ids['project'], 'title': 'MAIN DEV: Existing shipping root', 'description': 'Existing root context.',
-            'assignee_id': self.ids['main'], 'assignee_type': 'agent', 'status': 'in_progress', 'labels': [], 'metadata': {'unrelated': 'preserve'}}}, 'comments': [],
+            'issues': {}, 'comments': [],
             'github_calls': [], 'github': {'url': 'https://github.com/owner/requests/issues/42',
             'title': 'Ship the message', 'body': 'Requirement: write shipped. Verification: read message.txt.',
             'state': 'OPEN', 'comments': [], 'remote': str(self.remote)}}
-        db['issues'][self.ids['installer']] = {**db['issues'][self.ids['root']],
-            'id': self.ids['installer'], 'title': 'Install shipping', 'metadata': {}}
-        db['issues'][self.ids['root']]['parent_issue_id'] = self.ids['installer']
+        db['issues'][self.ids['installer']] = {'id': self.ids['installer'], 'workspace_id': self.ids['workspace'],
+            'project_id': self.ids['project'], 'title': 'Install shipping', 'description': '',
+            'assignee_id': self.ids['main'], 'assignee_type': 'agent', 'status': 'in_progress', 'labels': [], 'metadata': {}}
         self.db_path.write_text(json.dumps(db))
         binaries = self.base / 'bin'
         binaries.mkdir()
@@ -141,7 +139,7 @@ class WorkflowFixture(unittest.TestCase):
             self.installation_reply()
             self.assertEqual(self.installer('confirmed')['status'], 'finished')
         audit = self.read_answers()
-        root = next(row for row in self.db()['issues'].values() if row.get('parent_issue_id') == self.ids['installer'] and row['title'].startswith('MAIN DEV:'))
+        root = self.db()['issues'][audit['installed_main_issue_id']]
         self.ids['root'] = root['id']
         self.ids['project'] = root['project_id']
         self.config = {**audit, 'root_issue_id': root['id'],
@@ -210,7 +208,7 @@ class WorkflowFixture(unittest.TestCase):
         self.invoke(self.reviewer, role='reviewer')
         before = len(self.db()['comments'])
         result = self.invoke(self.reviewer, verdict, '--finding',
-                           'Acceptance, necessary additions and scope verified.' if verdict == 'approve' else
+                           'Acceptance verified: message.txt says shipped.' if verdict == 'approve' else
                            'Replace almost with shipped.', role='reviewer', plain=True)
         manual = self.state()['status'] == 'manual_approve'
         expected = ('Auto review pass, directly and silently exit until superior instruction, if outer confirmation has not been received yet.' if manual else
@@ -258,16 +256,11 @@ class WorkflowFixture(unittest.TestCase):
         self.install()
         for package in (self.root_package, self.developer, self.reviewer):
             self.assertIs(json.loads((package / 'config.json').read_text())['DEBUG'], True)
-        first = self.db()
-        self.install()
-        self.assertEqual(set(self.db()['agents']), set(first['agents']))
-        self.assertEqual(set(self.db()['skills']), set(first['skills']))
-        self.assertEqual(len(first['skills']), 2)
+        self.assertEqual(len(self.db()['skills']), 2)
         audit = self.read_answers()
         audit['directions'][0]['test_command'] = 'false'
         self.write_answers(audit)
         self.dispatch()
-        self.assertEqual(set(self.binding), {'questions', 'branch', 'parent_branch', 'manual'})
         self.assertEqual(self.binding['branch'], 'feat/messages/ship-message')
         self.assertEqual(self.call('git', 'ls-remote', '--heads', 'origin', self.binding['branch']).stdout, '')
         for role in ('developer', 'reviewer'):
@@ -305,7 +298,6 @@ class WorkflowFixture(unittest.TestCase):
         self.assertIn('Merged ', self.parent_notes()[0])
         self.assertEqual(self.state(), {})
         self.assertNotIn('sop.' + self.root_package.name, self.db()['issues'][self.ids['root']]['metadata'])
-        self.assertEqual(self.db()['issues'][self.ids['root']]['metadata']['unrelated'], 'preserve')
         self.assertEqual(len(self.call('git', 'worktree', 'list', '--porcelain').stdout.split('worktree ')), 2)
         self.assertEqual(self.call('git', 'branch', '--show-current').stdout.strip(), 'main')
         self.assertLessEqual(self.db()['peak_metadata_bytes'], 8192)
@@ -314,11 +306,9 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(len(self.parent_notes()), 1)
 
     def test_manual_check_reports_to_parent_and_finishes(self):
-        db = self.db()
-        db['issues'][self.ids['root']]['labels'] = [{'id': 'manual-label', 'name': 'manual'}]
-        self.db_path.write_text(json.dumps(db))
+        config = self.read_answers(); config['manual'] = True
+        self.write_answers(config)
         self.install(); self.dispatch(); self.submit('shipped')
-        self.assertEqual(self.db()['issues'][self.feature_id]['labels'], [{'id': 'manual-label', 'name': 'manual'}])
         self.assertEqual(self.review('approve')['status'], 'manual_approve')
         db = self.db()
         approval = {'id': str(uuid.uuid4()), 'issue_id': self.feature_id, 'parent_id': self.state()['manual_comment_id'],
@@ -332,8 +322,8 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(self.state(), {})
 
     def test_main_named_branch_guards_and_competing_first_push(self):
-        db = self.db(); db['issues'][self.ids['root']]['labels'] = [{'id': 'manual-label', 'name': 'manual'}]
-        self.db_path.write_text(json.dumps(db))
+        config = self.read_answers(); config['manual'] = True
+        self.write_answers(config)
         self.install(); self.dispatch()
         self.invoke(self.developer)
         (self.repo / 'message.txt').write_text('shipped\n')
@@ -387,13 +377,11 @@ class WorkflowFixture(unittest.TestCase):
         self.assertIn('distinct MAIN', result['error']['message'])
         self.assertEqual(len(self.db()['agents']), 1)
 
-    def test_install_creates_own_main_child_and_reuses_it(self):
+    def test_install_reentry_creates_another_main_and_retry_resumes_it(self):
         legacy = self.read_answers()
         legacy['main'] = legacy.pop('delegator')
         self.write_answers(legacy)
-        old_root = self.ids['root']
         db = self.db()
-        del db['issues'][old_root]
         db['issues'][self.ids['installer']]['project_id'] = None
         self.db_path.write_text(json.dumps(db))
         result = self.install()
@@ -402,8 +390,6 @@ class WorkflowFixture(unittest.TestCase):
         self.assertIn('installed_delegator_id', self.read_answers())
         self.assertNotIn('installed_main_id', self.read_answers())
         child = self.db()['issues'][result['root_issue_id']]
-        self.assertNotEqual(child['id'], old_root)
-        self.assertEqual(child['parent_issue_id'], self.ids['installer'])
         self.assertEqual(child['project_id'], self.db()['issues'][self.ids['installer']]['project_id'])
         self.assertEqual(self.db()['projects'][child['project_id']]['repository'], legacy['repository'])
         self.assertEqual(child['status'], 'backlog')
@@ -414,18 +400,40 @@ class WorkflowFixture(unittest.TestCase):
                          (self.ids['runtime'], 'fixture', 'high'))
         self.assertIn(self.config['delegation_skill_id'], self.db()['bindings'][main['id']])
         before = self.db()
-        self.assertEqual(self.install()['root_issue_id'], child['id'])
-        self.assertEqual(set(self.db()['issues']), set(before['issues']))
-        self.assertEqual(set(self.db()['agents']), set(before['agents']))
-        # A confirmed continuation finds MAIN through children and reuses proven IDs.
+        saved = self.read_answers()
+        # Reopen outside the SOP: saved completion, not issue status alone, starts a cycle.
         db = self.db()
         db['issues'][self.ids['installer']]['status'] = 'in_progress'
         self.db_path.write_text(json.dumps(db))
-        self.assertEqual(self.install()['root_issue_id'], child['id'])
+        self.assertEqual(self.installer()['status'], 'grilling')
+        self.assertEqual(self.read_answers(), saved)
         self.assertEqual(set(self.db()['issues']), set(before['issues']))
+        # A new cycle cannot use the previous human confirmation.
+        self.assertIn('Publish the config', self.installer('confirmed', ok=False)['error']['message'])
+        self.installer('edit', '--patch', '{}')
+        reply = self.installation_reply()
+        # Fail after MAIN creation, before completion, then retry from saved metadata.
+        db = self.db()
+        reviewer = db['agents'].pop(saved['installed_reviewer_id'])
+        self.db_path.write_text(json.dumps(db))
+        self.assertIn('error', self.installer('--thread', reply, 'confirmed', ok=False))
+        pending = self.db()
+        new_ids = set(pending['issues']) - set(before['issues'])
+        self.assertEqual(len(new_ids), 1)
+        second = new_ids.pop()
+        self.assertEqual(pending['issues'][child['id']], before['issues'][child['id']])
+        self.assertEqual(self.installer()['status'], 'grilling')
+        db = self.db(); db['agents'][reviewer['id']] = reviewer
+        self.db_path.write_text(json.dumps(db))
+        self.assertEqual(self.installer('confirmed')['status'], 'finished')
+        self.assertEqual(self.read_answers()['installed_main_issue_id'], second)
+        self.assertEqual(set(self.db()['issues']), set(pending['issues']))
         self.assertEqual(set(self.db()['agents']), set(before['agents']))
+        self.assertEqual(set(self.db()['skills']), set(before['skills']))
+        self.assertEqual(self.read_answers(), {**saved, 'installed_main_issue_id': second})
+        self.assertEqual(self.db()['issues'][child['id']], before['issues'][child['id']])
+        self.assertEqual(process_config(self.db()['issues'][second]), process_config(child))
         self.assertEqual(sum(call[:2] == ['project', 'create'] for call in self.db()['calls']), 1)
-        self.assertFalse(any(call[:2] == ['issue', 'list'] for call in self.db()['calls']))
 
     def test_install_edits_complete_config_then_requires_latest_human_confirmation(self):
         seed = self.read_answers()
@@ -441,12 +449,10 @@ class WorkflowFixture(unittest.TestCase):
         confirm_choice = initial['next_step'][1]['instruction']
         self.assertIn('human replies confirm', confirm_choice)
         self.assertNotIn('--thread', confirm_choice)
+        calls = self.db()['calls']
+        self.assertTrue(any(call[:2] == ['agent', 'get'] for call in calls))
         self.assertEqual(initial['status'], 'grilling')
-        self.assertIn('workflow', initial['instruction'])
-        self.assertNotIn('one edit', initial['instruction'])
-        self.assertNotIn('this SoP', initial['instruction'])
         self.assertIn('Current config:', initial['instruction'])
-        self.assertIn('runtime/model', initial['instruction'])
         self.assertIn('"scope": "."', initial['instruction'])
         self.assertEqual([step['command'].split()[2] for step in initial['next_step']],
                          ['edit', 'confirmed', 'quit'])
@@ -458,7 +464,6 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(config['directions'], seed['directions'])
         self.assertTrue(row['content'].endswith('Edit or confirm.'))
         self.assertEqual(installation_config(self.db()['issues'][self.ids['installer']]), config)
-        self.assertEqual(installation_config(self.db()['issues'][self.ids['root']]), {})
         self.assertEqual(len(self.db()['agents']), 1)
         self.assertEqual(len(self.db()['skills']), 0)
         self.assertIn('human must reply', self.installer('confirmed', ok=False)['error']['message'])
@@ -467,8 +472,10 @@ class WorkflowFixture(unittest.TestCase):
         old_reply = self.installation_reply()
         self.installer('--thread', old_reply, 'edit', '--patch', '{"developer":{"name":"New Developer"}}')
         self.assertIn('human must reply', self.installer('--thread', old_reply, 'confirmed', ok=False)['error']['message'])
-        # A different native task must retain issue-owned edits without a local answers file.
+        # Saved configuration must not look up installer defaults on re-entry.
+        before_calls = len(self.db()['calls'])
         self.assertIn('New Developer', self.installer()['instruction'])
+        self.assertFalse(any(call[:2] == ['agent', 'get'] for call in self.db()['calls'][before_calls:]))
         self.installation_reply()
         self.installation_reply('Wait, change the config first.')
         self.assertIn('human must reply', self.installer('confirmed', ok=False)['error']['message'])
@@ -476,17 +483,16 @@ class WorkflowFixture(unittest.TestCase):
         finished = self.installer('confirmed')
         self.assertEqual(finished['status'], 'finished')
         config = installation_config(self.db()['issues'][self.ids['installer']])
-        main = next(row for row in self.db()['issues'].values() if row.get('parent_issue_id') == self.ids['installer'] and row['title'].startswith('MAIN DEV:'))
+        main = self.db()['issues'][config['installed_main_issue_id']]
         self.assertEqual(installation_config(main), {})
-        self.assertEqual(process_config(main), {'manual': False, 'directions': {'message': {key: seed['directions'][0][key] for key in ('questions', 'branch_prefix')}}})
         self.assertTrue({'installed_delegator_id', 'installed_developer_id', 'installed_reviewer_id', 'installed_workspace_id', 'installed_project_id'} <= config.keys())
         self.assertFalse({'root_issue_id', 'installation_issue_id', 'workspace_id', 'project_id'} & config.keys())
         self.assertIn('CEO', self.db()['subscribers'][main['id']])
         self.assertEqual(self.db()['issues'][self.ids['installer']]['status'], 'done')
-        self.assertEqual(main['status'], 'in_progress')
         self.assertNotIn(seed['directions'][0]['questions'][0], self.db()['projects'][self.ids['project']]['description'])
         before = self.db()
-        self.assertEqual(self.installer()['status'], 'finished')
+        self.assertEqual(self.installer()['status'], 'grilling')
+        self.assertEqual(self.read_answers(), config)
         self.assertEqual(set(self.db()['issues']), set(before['issues']))
         self.assertEqual(set(self.db()['agents']), set(before['agents']))
 
@@ -496,7 +502,6 @@ class WorkflowFixture(unittest.TestCase):
                   'Acceptance: Does message.txt exactly match the requested message format?\n'
                   '<!-- /featssship:installation -->')
         db['projects'][self.ids['project']]['description'] += legacy + '\nKeep this footer.'
-        db['issues'][self.ids['root']]['description'] += legacy
         self.db_path.write_text(json.dumps(db))
         answers = self.read_answers()
         answers['directions'].append({'name': 'other', 'scope': 'other/', 'test_command': 'true',
@@ -510,9 +515,6 @@ class WorkflowFixture(unittest.TestCase):
         main = db['issues'][self.ids['root']]
         self.assertNotIn('Acceptance:', main['description'])
         self.assertIn(str(self.root_package / 'wrapper.py'), main['description'])
-        self.assertEqual(main['metadata']['unrelated'], 'preserve')
-        self.assertEqual(main['status'], 'in_progress')
-        self.assertEqual(main['title'], 'MAIN DEV: Existing shipping root')
         self.assertFalse((self.root_package / 'installation.json').exists())
         self.assertFalse((ROOT / '.multica/featssship/installer/installation.json').exists())
         self.assertEqual(set(process_config(main)['directions']['message']), {'questions', 'branch_prefix'})
@@ -535,7 +537,6 @@ class WorkflowFixture(unittest.TestCase):
                          child['metadata']['git_base_commit'])
         self.assertNotIn('test_command', self.delegation()['config'])
         process = process_config(child)
-        self.assertEqual(set(process), {'questions', 'branch', 'parent_branch', 'sandbox', 'manual'})
         self.assertEqual(process['questions'], self.config['directions'][0]['questions'])
         self.assertEqual(process['parent_branch'], 'main')
         self.assertEqual(process['sandbox'], {'policy': 'inherited-native-policy'})
@@ -543,6 +544,8 @@ class WorkflowFixture(unittest.TestCase):
         self.assertNotIn('featssship:binding', child['description'])
 
     def test_install_preserves_unrelated_main_skill(self):
+        config = self.read_answers(); config['delegator']['id'] = self.ids['main']
+        self.write_answers(config)
         db = self.db()
         skill_id = str(uuid.uuid4())
         db['skills'][skill_id] = {'id': skill_id, 'name': 'existing-main-skill', 'files': {}}

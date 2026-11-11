@@ -18,13 +18,18 @@ when context leaves something unclear. Editing does not create
 roles, skills or MAIN. Confirmation must be a human reply after the latest config
 comment. The human only replies `confirm`; the agent runs `confirmed` and the
 script finds that reply automatically. The JSON role key is `delegator`, while
-the child issue keeps its `MAIN DEV:` title. Installation metadata alone owns
-init settings and proven installed_* checkpoints; there are no local answers or binding JSON files. MAIN is discovered
-among installer children and subscribes CEO. On success only direction questions
-(string lists), branch prefixes and the manual boolean are copied to MAIN process metadata; the installer
-enters done. A feature receives only its selected questions, full branch, parent
-branch, manual boolean and inherited sandbox process settings. Identities and init defaults resolve
-through ancestry. The project description receives repository/scope/test context,
+the independent issue keeps its `MAIN DEV:` title. Installation metadata alone owns
+init settings and proven installed_* checkpoints; there are no local answers or
+binding JSON files. MAIN is created without a parent and its ID is saved in the
+active installation record for retries. Re-entry after completion keeps saved config and creates another MAIN.
+MAIN subscribes CEO and stores `installation_issue_id` beside its process settings.
+The installer enters done while MAIN continues independently. Each feature stores
+`main_issue_id` beside its shipping settings. Identities and init defaults resolve
+through these explicit references, never installation-parent ancestry.
+Before replacing shared skills, installation converts legacy stored parent links
+to these explicit metadata references across the workspace. Existing references
+and all other process settings remain unchanged; runtime resolution has no ancestry fallback.
+The project description receives repository/scope/test context,
 never questions or installed IDs. Upgrades replace only the installer's marked
 block and remove the previous full-config record from MAIN.
 The installer action graphs live in [its controller](../roles/installation.py).

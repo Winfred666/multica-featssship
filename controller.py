@@ -22,7 +22,7 @@ def configured(context):
     if (not process or context['workspace_id'] != main['workspace_id']
             or context['agent_id'] != main['assignee_id']):
         context['state'] = {}
-        raise context['error']('wrong_agent', 'Delegation belongs to the MAIN child and its native assignee.')
+        raise context['error']('wrong_agent', 'Delegation belongs to MAIN and its native assignee.')
     record = context['state'].get('delegation', installation_config(main, DELEGATION_KEY))
     if record:
         record['config'].pop('test_command', None)
@@ -149,7 +149,8 @@ def dispatch(args, context):
         label = label or cli('label', 'create', '--name', 'manual', '--color', '#64748b')
         cli('issue', 'label', 'add', child['id'], label['id'])
     child_process = {'questions': [request['question'], *[q for q in selected['questions'] if q != request['question']]],
-                     'branch': branch, 'parent_branch': parent_branch, 'manual': request['manual']}
+                     'branch': branch, 'parent_branch': parent_branch, 'manual': request['manual'],
+                     'main_issue_id': context['issue_id']}
     if 'sandbox' in process:
         child_process['sandbox'] = process['sandbox']
     save_config(child['id'], child_process, PROCESS_KEY)

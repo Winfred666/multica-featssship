@@ -59,10 +59,12 @@ def main():
         result = list({label['id']: label for issue in db['issues'].values() for label in issue.get('labels', [])}.values())
     elif args[:2] == ['label', 'create']:
         result = {'id': new(), 'name': option('name')}
+    elif args[:2] == ['issue', 'list']:
+        rows = list(db['issues'].values())
+        offset, limit = int(option('offset', '0')), int(option('limit', '50'))
+        result = {'issues': rows[offset:offset + limit], 'has_more': offset + limit < len(rows)}
     elif args[:2] == ['issue', 'get']:
         result = db['issues'][args[2]]
-    elif args[:2] == ['issue', 'children']:
-        result = {'stages': [], 'unstaged': [row for row in db['issues'].values() if row.get('parent_issue_id') == args[2]]}
     elif args[:3] == ['issue', 'subscriber', 'add']:
         users = db.setdefault('subscribers', {}).setdefault(args[3], [])
         if option('user') not in users:

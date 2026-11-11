@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 
-from common import PROCESS_KEY, QUESTIONS, check_repo, cli, exclude_local, feature_branch, installation_config, merge_patch, repo_root, save_config
+from common import PROCESS_KEY, check_repo, cli, exclude_local, feature_branch, installation_config, merge_patch, process_config, repo_root, save_config
 from packages import bind, build, install
 
 START, END = '<!-- featssship:installation -->', '<!-- /featssship:installation -->'
@@ -20,16 +20,17 @@ def section(original, text):
 
 
 def defaults(issue):
-    source = cli('agent', 'get', issue['assignee_id'])
-    settings = {key: source.get(key, '') for key in ('runtime_id', 'model', 'thinking_level')}
-    template = {'repository': '', 'manual': False,
-                **{role: {'name': 'Featssship ' + label, **settings}
-                   for role, label in (('delegator', 'Delegator'), ('developer', 'Developer'), ('reviewer', 'Reviewer'))},
-                'directions': [{'name': 'main', 'scope': '.', 'questions': list(QUESTIONS),
-                                'test_command': '', 'branch_prefix': 'feat/main'}]}
-    config = installation_config(issue) or template
+    config = installation_config(issue)
+    if not config:
+        source = cli('agent', 'get', issue['assignee_id'])
+        settings = {key: source.get(key, '') for key in ('runtime_id', 'model', 'thinking_level')}
+        config = {'repository': '', 'manual': False,
+                  **{role: {'name': 'Featssship ' + label, **settings}
+                     for role, label in (('delegator', 'Delegator'), ('developer', 'Developer'), ('reviewer', 'Reviewer'))},
+                  'directions': [{'name': 'main', 'scope': '.', 'questions': [],
+                                  'test_command': '', 'branch_prefix': 'feat/main'}]}
     config.setdefault('manual', False)
-    # Upgrade the previous installer record in place; never retain issue pointers.
+    # Upgrade the previous installer record in place; discard obsolete input pointers.
     for old, new in (('main', 'delegator'), ('main_id', 'installed_delegator_id'),
                      ('installed_main_id', 'installed_delegator_id')):
         value = config.pop(old, None)
@@ -46,7 +47,7 @@ def defaults(issue):
             config['installed_' + key] = config.pop(key)
     for direction in config['directions']:
         if 'question' in direction:
-            direction['questions'] = [direction.pop('question'), *QUESTIONS]
+            direction['questions'] = [direction.pop('question')]
     return config
 
 
@@ -107,27 +108,43 @@ def agent(config, role, issue):
     return selected
 
 
-def main_root(config, issue):
-    children = cli('issue', 'children', issue['id'])
-    rows = children['unstaged'] + [child for stage in children['stages'] for child in stage['issues']]
-    roots = [row for row in rows if row['title'].startswith('MAIN DEV:') and row['status'] != 'cancelled']
-    if len(roots) > 1:
-        raise ValueError('Installation has more than one MAIN child; select the intended child before continuing.')
-    if roots:
-        root = roots[0]
+def main_root(config, issue, state, save_state):
+    if state.get('main_issue_id'):
+        root = cli('issue', 'get', state['main_issue_id'])
         config['installed_delegator_id'] = root['assignee_id']
         agent(config, 'delegator', issue)
     else:
         main = agent(config, 'delegator', issue)
         root = cli('issue', 'create', '--title', 'MAIN DEV: Ship features for ' + config['repository'],
-                   '--description-stdin', '--parent', issue['id'], '--project', issue['project_id'],
+                   '--description-stdin', '--project', issue['project_id'], '--allow-duplicate',
                    '--assignee-id', main, '--status', 'backlog',
                    input='MAIN delegates features and receives verified results.')
+        state['main_issue_id'] = root['id']
+        save_state()
     cli('issue', 'subscriber', 'add', root['id'], '--user', 'CEO')
     return root
 
 
-def execute(config, issue):
+def upgrade_references():
+    """Convert legacy stored links before shared skills switch to explicit references."""
+    offset = 0
+    while True:
+        page = cli('issue', 'list', '--fields', 'id,parent_issue_id,metadata',
+                   '--sort', 'created_at', '--direction', 'asc', '--limit', '100', '--offset', str(offset))
+        for row in page['issues']:
+            process = process_config(row)
+            if not row.get('parent_issue_id'):
+                continue
+            for marker, key in (('directions', 'installation_issue_id'), ('branch', 'main_issue_id')):
+                if process.get(marker) and key not in process:
+                    process[key] = row['parent_issue_id']
+                    save_config(row['id'], process, PROCESS_KEY)
+        if not page['has_more']:
+            return
+        offset += len(page['issues'])
+
+
+def execute(config, issue, state, save_state):
     validate(config)
     repo = repo_root()
     check_repo(repo, config)
@@ -138,7 +155,7 @@ def execute(config, issue):
         issue['project_id'] = config['installed_project_id']
     config.update(installed_workspace_id=issue['workspace_id'], installed_project_id=issue['project_id'])
     save_config(issue['id'], config)
-    root = main_root(config, issue)
+    root = main_root(config, issue, state, save_state)
     project = cli('project', 'get', issue['project_id'])
     if root['workspace_id'] != issue['workspace_id'] or root['project_id'] != issue['project_id'] or project['workspace_id'] != issue['workspace_id']:
         raise ValueError('The selected root and project must belong to the target workspace/project.')
@@ -148,6 +165,7 @@ def execute(config, issue):
     reviewer = agent(config, 'reviewer', issue)
     if developer == reviewer or root['assignee_id'] in (developer, reviewer):
         raise ValueError('Select distinct MAIN, Developer and Reviewer agents so MAIN only dispatches and receives.')
+    upgrade_references()
     exclude_local(repo)
     local = repo / '.multica' / 'featssship' / 'packages'
     feature_package = build('feature', local / 'multica-featssship-develop-review')
@@ -183,10 +201,11 @@ def execute(config, issue):
         (target / 'installation.json').unlink(missing_ok=True)
         for obsolete in (target / 'roles').glob('*-debug.md'):
             obsolete.unlink()
-    save_config(root['id'], {'manual': config.get('manual', False), 'directions': {d['name']: {key: d[key] for key in ('questions', 'branch_prefix')}
+    save_config(root['id'], {'installation_issue_id': issue['id'], 'manual': config.get('manual', False), 'directions': {d['name']: {key: d[key] for key in ('questions', 'branch_prefix')}
                                                    for d in config['directions']}}, PROCESS_KEY)
     if installation_config(root):
         cli('issue', 'metadata', 'delete', root['id'], '--key', 'featssship.installation')
+    config['installed_main_issue_id'] = root['id']
     save_config(issue['id'], config)
     command = shlex.join(['python3', str(destination / name / 'wrapper.py')])
     return {'root_issue_id': root['id'], 'developer_id': developer, 'reviewer_id': reviewer,

@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 
 from common import WAIT_OUTER, block, cli, comment, save_config, unpack
-from sop import Completed, Option, Parameter, State, Workflow
+from sop import Option, Parameter, State, Workflow
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from install import defaults, execute, merge_patch
@@ -18,7 +18,7 @@ COMMENTS = ('Defaults: repository is the target Git URL, not the featssship sour
             'Each directions entry owns name, scope (paths), Reviewer questions (string list), test_command and branch_prefix; '
             'replace the list to set all concurrent directions. Missing acceptance questions/test_command must be filled from context. '
             'Roles default to distinct new agents using the installer runtime/model; set role.id to reuse one. '
-            'Blank model inherits the runtime default. MAIN is found among installer children; CEO is subscribed. '
+            'Blank model inherits the runtime default. A new cycle creates an independent MAIN; unfinished retries use its saved ID. CEO is subscribed. '
             'manual defaults to false; true requires superior approval after automated review and permits a remote feature branch. '
             'installed_* fields are script-owned audit checkpoints, retained only here. '
             'Use a JSON merge patch: objects merge, arrays replace, null removes a field.')
@@ -32,8 +32,6 @@ def observed(context):
     context.update(config=config, issue=issue)
     if context['args'].thread:
         context['state']['reply_parent'] = context['args'].thread
-    if issue['status'] == 'done':
-        raise Completed('Installation finished. Continue on the MAIN DEV: child of this issue.')
 
 
 def view(context):
@@ -65,7 +63,7 @@ def edit(args, context):
 def confirmed(args, context):
     """```dot
     digraph confirmed { node [shape=box]; check [label="Require human confirmation of latest config"];
-        install [label="Validate; reuse/create MAIN and roles; install skills"];
+        install [label="Validate; resume this cycle or create another MAIN; install roles/skills"];
         inject [label="Copy process settings into MAIN metadata; remove legacy description block"];
         finish [label="Mark installer done"];
         check -> install -> inject -> finish; }
@@ -85,7 +83,7 @@ def confirmed(args, context):
             raise context['error']('invalid_input', 'A human must reply confirm after the latest config in its thread.')
         state['confirmed_comment_id'] = human['id']
         context['save_state']()
-    result = execute(config, context['issue'])
+    result = execute(config, context['issue'], state, context['save_state'])
     cli('issue', 'status', context['issue_id'], 'done')
     return {'instruction': 'Installation finished. Continue on MAIN ' + result['root_issue_id'] +
             ' using ' + result['command'] + '. Exit this round.'}

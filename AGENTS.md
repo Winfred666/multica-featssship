@@ -8,9 +8,9 @@ Declare global routing in Workflow and local action logic in short DOT docstring
 
 The first assigned prototype issue is explicitly authorized to develop and commit directly on `main`. It carries `dev` and `manual`; human review owns acceptance. Verify its repository and branch before editing. Report the prototype in its native issue and wait for human acceptance. Do not create a PR unless requested.
 
-Installation is a resumable README-guided script in its assigned installer issue. It creates its own MAIN DEV: child, derives workspace/project from the installer, and uses only grilling and finished states. Grilling updates only the settings needed for the requested workflow, keeps choices that already fit, and allows repeated edits. Ask a human question only when context cannot resolve uncertainty. Human confirmation gates all installation writes. Never search for a MAIN root or ask the human for an existing root UUID. Reuse saved child/agent IDs on resumption. Root delegation is the only root SOP; Developer and Reviewer share one fixed feature skill; acceptance questions come from their issue. Use standalone repository-owned procedures and native Multica CLI actions. The product must not invoke system distribution, review or delivery SOP skills.
+Installation is a resumable README-guided script in its assigned installer issue. It creates an independent MAIN DEV: issue, derives workspace/project from the installer, and uses only grilling and finished states. Grilling updates only the settings needed for the requested workflow, keeps choices that already fit, and allows repeated edits. Ask a human question only when context cannot resolve uncertainty. Human confirmation gates all installation writes. Never search for a MAIN root or ask the human for an existing root UUID. Reuse the saved active MAIN/agent IDs on resumption. Root delegation is the only root SOP; Developer and Reviewer share one fixed feature skill; acceptance questions come from their issue. Use standalone repository-owned procedures and native Multica CLI actions. The product must not invoke system distribution, review or delivery SOP skills.
 
-Developer and Reviewer have distinct native identities and separate contexts. Keep source edits, tests and approved integration with Developer. Retain one non-merge feature commit; allow a merge-resolution commit when parent integration returns rework. Reviewer only reads and returns approval, corrections or cancellation; cancel may invoke scripted local cleanup. MAIN starts delegation in grilling with its request config, patches only uncertain settings, then dispatches and receives results. Retain config and dispatch checkpoints in MAIN metadata, not local JSON or comment-derived drafts. Preserve the original request, acceptance question, minimum review questions and review/rework loop.
+Developer and Reviewer have distinct native identities and separate contexts. Keep source edits, tests and approved integration with Developer. Retain one non-merge feature commit; allow a merge-resolution commit when parent integration returns rework. Reviewer only reads and returns approval, corrections or cancellation; cancel may invoke scripted local cleanup. MAIN starts delegation in grilling with its request config, patches only uncertain settings, then dispatches and receives results. Retain config and dispatch checkpoints in MAIN metadata, not local JSON or comment-derived drafts. Preserve the original request, acceptance question, functional review questions and review/rework loop.
 
 Use `Workflow`, `State`, `Option` and declared prechecks from the current template. Each feature issue owns one SoP metadata record shared by both agents. Reject the wrong agent ID for the current phase. Dispatch prepares one issue-owned Git worktree; both roles use it without a separate Reviewer checkout. Let Git own worktree identity; store no custom folder registry or task ID. Publish findings, verdicts and delivery evidence as comments.
 
@@ -26,13 +26,16 @@ with `packages.build('delegation', ...)` or
 Use the [RSI creator](https://github.com/Winfred666/multica-RSI/blob/main/harness/skills/create-symbolic-sop/scripts/check.py)
 for generic runtime protocol and renderer checks, not another copy here.
 
-Find MAIN among the installation issue's children; subscribe CEO. Preserve its
-identity, history, labels and status. Bind skills additively. Installation metadata
+Create MAIN without a parent, save its ID for same-cycle retries and subscribe CEO.
+Preserve existing MAIN issues. Bind skills additively. Installation metadata
 is the only source of truth: no local answers or binding JSON. Keep init settings
-and proven installed_* checkpoints on the installer. Copy only direction questions
-(string lists), branch prefixes and the manual boolean to MAIN process metadata. Features receive only
-the selected questions, branch, parent branch, manual boolean and inherited sandbox settings.
-Resolve identities and init defaults through ancestry. Project context may include
+and proven installed_* checkpoints on the installer. Copy direction questions
+(string lists), branch prefixes, the manual boolean and an explicit `installation_issue_id`
+reference to MAIN process metadata. Features receive only
+the selected questions, branch, parent branch, manual boolean, inherited sandbox settings
+and an explicit `main_issue_id` reference. Resolve identities and init defaults through
+these references, not installation-parent ancestry. Do not add nested-issue hierarchy
+or rubric-style tests; keep verification focused on functional shipping behavior. Project context may include
 repository/scope/tests, never review questions or installed IDs. After edit, comment
 tidy JSON, ask the human to edit or confirm, and tell the agent to exit silently if outer confirmation has not been received yet.
 

@@ -4,10 +4,6 @@ from pathlib import Path
 import re
 import subprocess
 
-QUESTIONS = (
-    'Does the solution preserve the requested demand without shifting scope?',
-    'Are the additions necessary for the requested outcome?',
-)
 # TODO: Runtime-enforced completion belongs to https://github.com/Winfred666/multica-RSI/issues/40.
 ROUND_DONE = 'Delivery/review/work done this round, exit directly and silently'
 REWORK_DONE = 'Rework sent, directly and silently exit'
@@ -43,14 +39,14 @@ def merge_patch(config, patch):
 
 
 def installer_config(main):
-    return installation_config(cli('issue', 'get', main['parent_issue_id']))
+    return installation_config(cli('issue', 'get', process_config(main)['installation_issue_id']))
 
 
 def feature_config(issue):
     process = process_config(issue)
     if not process:
         raise ValueError('MAIN must supply the issue’s process configuration before development.')
-    main = cli('issue', 'get', issue['parent_issue_id'])
+    main = cli('issue', 'get', process['main_issue_id'])
     installed = installer_config(main)
     directions = process_config(main)['directions']
     name = next(name for name, direction in directions.items()
