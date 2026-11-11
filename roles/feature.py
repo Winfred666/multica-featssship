@@ -6,7 +6,7 @@ from common import ROUND_DONE, REWORK_DONE, check_repo, clean, cli, comment, ent
 from sop import Branch, Completed, Option, Parameter, State, Workflow
 
 REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared folder and branch. '
-                 'Only read and review; do not edit source, run tests, merge or push. '
+                 'Only read and review; do not edit source, run tests, merge or push. Cancel may invoke scripted local cleanup. '
                  'Answer the acceptance and review questions in --finding. Approve or return corrections.')
 
 # TODO: break agent-as-middle-layer: the runtime should stop until superior input directly.
@@ -32,9 +32,9 @@ def observed(context):
     context.update(issue=issue, binding=binding)
     if 'result' not in context:
         require_role(context, role)
-    if issue['status'] in ('done', 'in_review') or (issue['status'] == 'cancelled' and not context['state'].get('cancel_reason')):
+    if issue['status'] in ('done', 'in_review', 'cancelled'):
         context['handoff'] = ROUND_DONE
-        raise Completed(ROUND_DONE, target='reported')
+        raise Completed(ROUND_DONE)
 
 
 def shared_repo(context):
@@ -69,6 +69,18 @@ def submit(args, context):
     context['handoff'] = ROUND_DONE
 
 
+def outer_confirmed(args, context):
+    rows = cli('issue', 'comment', 'list', context['issue_id'], '--thread', args.thread or context['state']['manual_comment_id'], '--tail', '30')
+    gate = next(row for row in rows if row['id'] == context['state']['manual_comment_id'])
+    main = cli('issue', 'get', context['issue']['parent_issue_id'])
+    outer = next((row for row in reversed(rows) if row['id'] == args.thread or
+                  (not args.thread and (row.get('author_type') == 'member' or row.get('author_id') == main['assignee_id']))), None)
+    if (not outer or rows.index(outer) <= rows.index(gate)
+            or not (outer.get('author_type') == 'member' or outer.get('author_id') == main['assignee_id'])
+            or outer['content'].strip().split(maxsplit=1)[0].rstrip(':').casefold() != args.event):
+        raise ValueError('ONLY outer allowed: reply approve, rework or cancel after the automated review, then pass that comment with --thread.')
+
+
 def verdict(args, context):
     """```dot
     digraph verdict { node [shape=box]; inspect [label="Read submitted revision"];
@@ -78,105 +90,104 @@ def verdict(args, context):
     ```"""
     require_role(context, 'reviewer' if context['phase'] == 'review' else 'developer')
     if context['phase'] == 'manual_approve':
-        rows = cli('issue', 'comment', 'list', context['issue_id'], '--thread', args.thread or context['state']['manual_comment_id'], '--tail', '30')
-        gate = next(row for row in rows if row['id'] == context['state']['manual_comment_id'])
-        main = cli('issue', 'get', context['issue']['parent_issue_id'])
-        outer = next((row for row in reversed(rows) if row['id'] == args.thread or
-                      (not args.thread and (row.get('author_type') == 'member' or row.get('author_id') == main['assignee_id']))), None)
-        if (not outer or rows.index(outer) <= rows.index(gate)
-                or not (outer.get('author_type') == 'member' or outer.get('author_id') == main['assignee_id'])
-                or outer['content'].strip().split(maxsplit=1)[0].rstrip(':').casefold() != args.event):
-            raise ValueError('ONLY outer allowed: reply approve, rework or cancel after the automated review, then pass that comment with --thread.')
+        outer_confirmed(args, context)
     if args.event == 'cancel':
         context['state']['cancel_reason'] = args.reason
-        cli('issue', 'status', context['issue_id'], 'cancelled')
-        return {'phase': 'finished'}
+        return finish(context)
     repo, binding, state = shared_repo(context), context['binding'], context['state']
     commit = state['commit']
     if git(repo, 'rev-parse', 'HEAD') != commit:
         raise ValueError('Review the exact submitted revision; changed code needs a new submission.')
     approved = args.event == 'approve'
     if approved:
-        state['finding'] = (state['finding'] + '\nOuter approval: ' + args.finding
-                            if context['phase'] == 'manual_approve' else args.finding)
+        state['finding'] = args.finding
         if context['phase'] == 'review' and binding.get('manual', has_manual(context['issue'])):
             row = comment(context['issue_id'], MANUAL_WAIT + '\n\nONLY outer allowed: reply approve, rework or cancel.', args.thread)
             state['manual_comment_id'] = row['id']
             context['handoff'] = MANUAL_WAIT
             return {'phase': 'manual_approve'}
     if context['phase'] == 'manual_approve':
-        return {'phase': 'finished' if approved else 'develop'}
+        return {'phase': 'develop'}
     comment(context['issue_id'], mention(binding['developer_id']) + ' TODO: ' +
-            ('Finish approved ' if approved else 'Correct ') +
+            ('Merge approved ' if approved else 'Correct ') +
             '[result](mention://issue/' + context['issue_id'] + ') at ' + commit + '.\n' +
             args.finding + '\n\n' + entry_command('multica-featssship-develop-review'),
             getattr(args, 'thread', None), steer_agent=binding['developer_id'])
     context['handoff'] = ROUND_DONE if approved else REWORK_DONE
-    return {'phase': 'finished' if approved else 'develop'}
+    return {'phase': 'approve' if approved else 'develop'}
 
 
-def finish(args, context):
+def merge_approved(args, context):
     """```dot
-    digraph finish { node [shape=box]; check [label="Developer: verify owned worktree"];
-        cancelled [shape=diamond, label="Cancelled?"];
-        merge [label="Verify approved HEAD; test, merge parent and test"];
+    digraph merge_approved { node [shape=box]; check [label="Developer: verify approved HEAD"];
+        merge [label="Merge parent; test and advance local main"];
         conflict [shape=diamond, label="Merge conflict?"];
-        rework [label="Resolve conflict, commit merge; return to develop"];
-        cleanup [label="Delete local worktree and branch"];
-        push [label="Push integrated commit to remote parent"];
-        report [label="Report result to MAIN"];
-        check -> cancelled; cancelled -> cleanup [label="yes"];
-        cancelled -> merge [label="no"]; merge -> conflict;
-        conflict -> rework [label="yes"]; conflict -> cleanup [label="no"];
-        cleanup -> push [label="approved"]; cleanup -> report [label="cancelled"]; push -> report; }
+        rework [label="Resolve merge; commit and resubmit"];
+        finish [label="Delete local feature tree/branch; push main; finish"];
+        check -> merge -> conflict; conflict -> rework [label="yes"];
+        conflict -> finish [label="no"]; }
     ```"""
     require_role(context, 'developer')
+    if context['phase'] == 'manual_approve':
+        outer_confirmed(args, context)
+        context['state']['finding'] += '\nOuter approval: ' + args.finding
+    repo, binding, state = shared_repo(context), context['binding'], context['state']
+    commit = state['commit']
+    if git(repo, 'rev-parse', 'HEAD') != commit:
+        raise ValueError('Merge the exact approved revision; changed code needs a new review.')
+    try:
+        test(repo, binding['test_command'])
+        if binding.get('manual', has_manual(context['issue'])) and git(repo, 'ls-remote', 'origin', 'refs/heads/' + binding['branch']).split()[0] != commit:
+            raise ValueError('The remote feature branch changed after submission.')
+        git(repo, 'fetch', 'origin', binding['parent_branch'])
+        git(repo, 'merge', '--no-edit', 'origin/' + binding['parent_branch'])
+        test(repo, binding['test_command'])
+        integrated = git(repo, 'rev-parse', 'HEAD')
+        ref = 'refs/heads/' + binding['parent_branch']
+        parents = [block.splitlines()[0][9:] for block in git(repo, 'worktree', 'list', '--porcelain').split('\n\n')
+                   if '\nbranch ' + ref + '\n' in '\n' + block + '\n']
+        if parents:
+            clean(parents[0])
+            git(parents[0], 'merge', '--ff-only', integrated)
+        else:
+            old = git(repo, 'for-each-ref', '--format=%(objectname)', ref)
+            if old:
+                git(repo, 'merge-base', '--is-ancestor', old, integrated)
+            git(repo, 'update-ref', ref, integrated, old)
+        state['integrated'] = integrated
+    except ValueError as error:
+        return {'phase': 'develop', 'instruction': 'Integration rework: resolve any merge conflict in this worktree, merge the latest parent, commit the resolution as a merge commit and submit for review again. ' + str(error)}
+    return finish(context)
+
+
+def finish(context):
+    """Clean up and push on entry to terminal finished; cancellation skips push."""
     repo, binding, state = shared_repo(context), context['binding'], context['state']
     common = Path(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'))
     if repo.resolve() != (common / 'featsship' / context['issue_id']).resolve():
         raise ValueError('Finish from this issue’s prepared feature worktree.')
-    cleanup = bool(state.get('cancel_reason'))
-    if cleanup:
-        note = 'Cancelled: ' + state['cancel_reason']
-    else:
-        commit = state['commit']
-        if git(repo, 'rev-parse', 'HEAD') != commit:
-            raise ValueError('Finish the exact approved revision; changed code needs a new review.')
+    cancelled = state.get('cancel_reason')
+    note = ('Cancelled: ' + cancelled if cancelled else
+            'Merged ' + state['integrated'] + ': ' + state['summary'] + '\nReview: ' + state['finding'])
+    os.chdir(common)
+    run('git', '--git-dir', str(common), 'worktree', 'remove', str(repo))
+    run('git', '--git-dir', str(common), 'branch', '-D', binding['branch'])
+    note += '\nRemoved the local feature worktree and branch.'
+    if not cancelled:
         try:
-            test(repo, binding['test_command'])
-            if binding.get('manual', has_manual(context['issue'])) and git(repo, 'ls-remote', 'origin', 'refs/heads/' + binding['branch']).split()[0] != commit:
-                raise ValueError('The remote feature branch changed after submission.')
-            git(repo, 'fetch', 'origin', binding['parent_branch'])
-            git(repo, 'merge', '--no-edit', 'origin/' + binding['parent_branch'])
-            test(repo, binding['test_command'])
-            integrated = git(repo, 'rev-parse', 'HEAD')
-            note = 'Merged ' + integrated + ': ' + state['summary'] + '\nReview: ' + state['finding']
-            cleanup = True
+            run('git', '--git-dir', str(common), 'push', 'origin', state['integrated'] + ':refs/heads/' + binding['parent_branch'])
         except ValueError as error:
-            if git(repo, 'ls-files', '--unmerged'):
-                return {'phase': 'develop', 'instruction': 'Merge conflict: resolve it in this worktree, commit the resolution as a merge commit, then submit for review again.'}
-            note = 'Manual check required for ' + commit + ': ' + str(error)
-    if cleanup:
-        os.chdir(common)
-        run('git', '--git-dir', str(common), 'worktree', 'remove', str(repo))
-        run('git', '--git-dir', str(common), 'branch', '-D', binding['branch'])
-        note += '\nRemoved the local feature worktree and branch.'
-        if not state.get('cancel_reason'):
-            try:
-                run('git', '--git-dir', str(common), 'push', 'origin', integrated + ':refs/heads/' + binding['parent_branch'])
-            except ValueError as error:
-                run('git', '--git-dir', str(common), 'branch', binding['branch'], integrated)
-                run('git', '--git-dir', str(common), 'worktree', 'add', str(repo), binding['branch'])
-                return {'phase': 'develop', 'instruction': 'Parent push failed; restored the local branch/worktree for rework. Merge the latest parent, commit the resolution and submit again. ' + str(error)}
+            run('git', '--git-dir', str(common), 'branch', binding['branch'], state['integrated'])
+            run('git', '--git-dir', str(common), 'worktree', 'add', str(repo), binding['branch'])
+            return {'phase': 'develop', 'instruction': 'Parent push failed; restored the local branch/worktree for rework. Merge the latest parent, commit the resolution and submit again. ' + str(error)}
     parent = context['issue']['parent_issue_id']
     main = cli('issue', 'get', parent)
     comment(parent, mention(main['assignee_id']) +
             ' TODO: Review the [Feature](mention://issue/' + context['issue_id'] + ') result.\n\n' + note,
             steer_agent=main['assignee_id'])
-    if not state.get('cancel_reason'):
-        cli('issue', 'status', context['issue_id'], 'in_review')
+    cli('issue', 'status', context['issue_id'], 'cancelled' if cancelled else 'in_review')
     context['handoff'] = ROUND_DONE
-    return {'phase': 'reported', 'instruction': note + '\nReported to MAIN; end this turn.'}
+    return {'phase': 'finished', 'instruction': note + '\nReported to MAIN; end this turn.'}
 
 
 workflow = Workflow(
@@ -191,19 +202,21 @@ workflow = Workflow(
               Option('approve', 'approval', 'Approve the revision; manual config waits for outer approval.', verdict,
                      params=(Parameter('--finding', 'Acceptance answer and review evidence'),)),
               Option('rework', 'develop', 'Send corrections to Developer.', verdict,
-                     params=(Parameter('--finding', 'Concrete corrections'),)))),
-    Branch('approval', 'manual config?', {'manual': 'manual_approve', 'automatic': 'finished'}),
+                     params=(Parameter('--finding', 'Concrete corrections'),)),
+              Option('cancel', 'finished', 'Cancel for wrong scope, incomplete Git/version infrastructure or refactoring beyond the edit budget; script cleans locally without merging or pushing.', verdict,
+                     params=(Parameter('--reason', 'Concrete cancellation blocker'),)))),
+    Branch('approval', 'manual config?', {'manual': 'manual_approve', 'automatic': 'approve'}),
+    State('approve', 'Developer: automated review passed. Approve now to merge into local main, then clean up and push automatically.',
+          precheck=observed, options=(Option('approve', 'merge_result', 'Merge approved work; conflict returns to development, success finishes automatically.', merge_approved),)),
     State('manual_approve', MANUAL_WAIT, precheck=observed, options=(
         Option('rework', 'develop', 'ONLY outer allowed: send the requested corrections to Developer.', verdict,
                params=(Parameter('--finding', 'Superior-requested corrections'),)),
-        Option('approve', 'finished', 'ONLY outer allowed: approve final integration and cleanup.', verdict,
+        Option('approve', 'merge_result', 'ONLY outer allowed: merge approved work, then clean up and push automatically.', merge_approved,
                params=(Parameter('--finding', 'Superior approval evidence'),)),
         Option('cancel', 'finished', 'ONLY outer allowed: cancel the feature and clean up without integration.', verdict,
                params=(Parameter('--reason', 'Superior cancellation reason'),)),
     )),
-    State('finished', 'Developer: for approval, integrate, delete the local feature branch/worktree, then push the approved commit to the remote parent. For cancellation, only delete locally. Report to MAIN.',
-          precheck=observed, options=(Option('finish', 'completion', 'Finish approved integration or cancellation; delete locally before pushing the approved result.', finish),)),
-    Branch('completion', 'Integration outcome?', {'rework: merge conflict or rejected push': 'develop', 'finished/cancelled': 'reported'}),
-    State('reported', 'Reported to MAIN; end this turn.', final=True),
+    Branch('merge_result', 'Merge conflict / rework?', {'rework': 'develop', 'merged': 'finished'}),
+    State('finished', 'Local cleanup and any approved push completed; reported to MAIN. End this turn.', final=True),
     params=(Parameter('--thread', 'Native triggering comment UUID', required=False),),
 )

@@ -224,7 +224,7 @@ class WorkflowFixture(unittest.TestCase):
     def finish(self):
         self.invoke(self.developer)
         before = len(self.db()['comments'])
-        result = self.invoke(self.developer, 'finish', plain=True)
+        result = self.invoke(self.developer, 'approve', plain=True)
         self.repo = self.root_repo
         self.assertEqual(result.stdout, 'Delivery/review/work done this round, exit directly and silently\n')
         self.assertEqual(result.stderr, '')
@@ -294,7 +294,7 @@ class WorkflowFixture(unittest.TestCase):
         commit = self.submit('shipped')
         self.assertNotEqual(first_commit, commit)
         self.advance_main('other.txt', 'Concurrent safe change\n')
-        self.assertEqual(self.review('approve')['status'], 'finished')
+        self.assertEqual(self.review('approve')['status'], 'approve')
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'baseline\n')
         self.assertEqual(self.parent_notes(), [])
         self.finish()
@@ -324,8 +324,8 @@ class WorkflowFixture(unittest.TestCase):
                     'author_type': 'member', 'author_id': str(uuid.uuid4()), 'content': 'approve'}
         db['comments'].append(approval); self.db_path.write_text(json.dumps(db))
         self.invoke(self.developer, '--thread', approval['id'])
-        self.invoke(self.developer, 'approve', '--thread', approval['id'], '--finding', 'Superior approved.')
-        self.finish()
+        self.invoke(self.developer, 'approve', '--thread', approval['id'], '--finding', 'Superior approved.', plain=True)
+        self.repo = self.root_repo
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'shipped\n')
         self.assertIn('Merged ', self.parent_notes()[0])
         self.assertEqual(self.state(), {})

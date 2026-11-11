@@ -22,17 +22,21 @@ allowed: a human or MAIN replies approve/rework/cancel to the review thread; Dev
 executes that choice. Automated features skip this wait. No remote feature branch
 is created or pushed unless manual.
 
-Approval sends Developer to `finished`, not a separate integration stage.
-The `finish` action verifies the approved HEAD, integrates, automatically removes
-the owned local branch/worktree, pushes the integrated commit to the remote parent,
-and reports to MAIN. Merge conflicts return directly to develop for a resolution
-merge commit and another review; rejected parent pushes restore the worktree
-for rework. Other failures preserve the worktree and report the problem. Manual mode uses the same cleanup
-because superior approval already happened. `cancel` is also available in develop
-(for wrong scope, incomplete Git/version infrastructure, or refactoring beyond the
-allowed edit budget) and manual_approve (ONLY outer allowed). Preserve or commit
-edits first. Cancellation marks the issue cancelled, then finished deletes the
-local worktree/branch without testing, merging or pushing the feature.
+Automated approval sends Developer to `approve`; manual approval waits in
+`manual_approve`. Both approval choices call the same `merge_approved` action.
+It verifies the approved HEAD, merges and advances local main before `finished`.
+The declared merge-result diamond returns conflicts directly to develop for a
+resolution merge commit and fresh review. Success automatically deletes the
+owned local feature worktree/branch, pushes the integrated commit and reports to
+MAIN before entering terminal `finished`. There is no reported state or finish
+command. Rejected pushes restore the feature worktree for rework.
+
+`cancel` is available in develop, review and manual_approve (ONLY outer allowed).
+Use it for wrong scope, incomplete Git/version infrastructure or refactoring
+beyond the edit budget. Preserve or commit edits first. Cancellation performs
+scripted local cleanup, marks the issue cancelled and enters finished without
+integration, tests or pushing. Reviewer may invoke cancel cleanup, but never
+perform source edits, tests or approved integration.
 
 Rework returns only "Rework sent, directly and silently exit"; only Developer may
 act in the resulting develop state. Other successful handoffs post one recipient TODO with a

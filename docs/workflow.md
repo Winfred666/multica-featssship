@@ -49,21 +49,24 @@ digraph develop_review {
   rankdir=LR; node [shape=box];
   develop [label="Developer: implement, test and submit"];
   review [label="Reviewer: inspect exact revision"];
-  manual_approve [label="manual_approve: wait for superior approve/rework/cancel"];
-  finished [label="Developer: integrate, delete locally, push parent, report"];
-  reported [label="Reported to MAIN"];
+  approval [shape=diamond, label="manual config?"];
+  approve [label="Developer: auto-approved action"];
+  manual_approve [label="manual_approve: wait for outer instruction"];
+  merge_result [shape=diamond, label="Merge conflict / rework?"];
+  finished [label="finished: cleaned, pushed if approved, reported", peripheries=2];
   develop -> review [label="submit"];
   review -> develop [label="rework"];
-  develop -> finished [label="cancel: blocker"];
-  review -> finished [label="approve, automatic"];
-  review -> manual_approve [label="approve, manual"];
-  manual_approve -> finished [label="approve: ONLY outer allowed"];
+  review -> approval [label="approve"];
+  approval -> approve [label="automatic"];
+  approval -> manual_approve [label="manual"];
+  approve -> merge_result [label="approve: merge_approved"];
+  manual_approve -> merge_result [label="approve: same merge_approved; ONLY outer allowed"];
   manual_approve -> develop [label="rework: ONLY outer allowed"];
-  manual_approve -> finished [label="cancel: ONLY outer allowed"];
-  completion [shape=diamond, label="Integration outcome?"];
-  finished -> completion [label="finish: integrate, delete locally, push parent"];
-  completion -> develop [label="merge conflict or rejected push: rework"];
-  completion -> reported [label="finished/cancelled"];
+  develop -> finished [label="cancel: cleanup only"];
+  review -> finished [label="cancel: cleanup only"];
+  manual_approve -> finished [label="cancel: cleanup only; ONLY outer allowed"];
+  merge_result -> develop [label="rework"];
+  merge_result -> finished [label="merged: cleanup then push automatically"];
 }
 ```
 
@@ -78,21 +81,36 @@ Only manual mode creates/pushes a remote feature branch; its first push leases
 the reserved revision and corrections lease the prior submission. Automatic
 features stay local until their approved result is pushed to the existing parent branch.
 Features share no branch registry or SOP-wide lock.
-A manual config adds the manual label before the child starts. Review never creates a checkout or switches branches;
-it checks the existing tree and submitted HEAD in place. Manual automated approval waits in manual_approve; a human or MAIN must approve, request rework or cancel. Developer alone executes those outer choices. In finished,
-Developer integrates, deletes only this issue’s local branch/worktree, then
-automatically pushes the integrated commit to the remote parent in both modes.
-Merge conflicts return directly to develop with the unresolved merge preserved;
-resolve it with an additional merge commit and resubmit for review. Rejected
-parent pushes restore the local branch/worktree for rework. Other failures
-preserve the work and report the problem. There is no separate integration stage.
-Cancellation is available in develop for scope, Git/version infrastructure or
-edit-budget blockers, and in manual_approve for outer cancellation. Preserve or
-commit edits first. It marks the issue cancelled and enters finished for local
-cleanup, without tests, integration or feature pushes. Human acceptance owns done.
+A manual config adds the manual label before the child starts. Review never
+creates a checkout or switches branches. Automated review approval hands the
+Developer the `approve` action; manual approval waits in `manual_approve` for
+human or MAIN input. Both approval options call the same `merge_approved`
+function. It checks the exact approved HEAD, merges/tests, and fast-forwards local
+main in its clean existing worktree (or atomically advances its unoccupied ref).
+No feature worktree changes branch. The merge-result diamond comes before terminal
+finished: conflicts return to develop with the unresolved merge preserved, for a
+resolution merge commit and another review. Success continues directly through
+local feature cleanup, parent push and MAIN delivery, then enters finished.
+A rejected push restores the local feature branch/worktree for rework. There is
+no reported state, final-state action or finish command.
 
-Reviewer only reads and returns a verdict. Developer owns all tests and Git
-writes. Approval hands integration back to Developer. Each successful delivery
+Cancellation is available in develop and review for scope, Git/version
+infrastructure or edit-budget blockers, and in manual_approve for outer
+cancellation. Preserve or commit edits first. The script deletes the local
+feature tree/branch, marks the issue cancelled and enters finished without tests,
+integration or pushes. Reviewer may invoke this fixed cleanup but remains
+read-only for source, tests and integration. Human acceptance owns done.
+
+Declare `Branch('merge_result', ..., {'rework': 'develop', 'merged': 'finished'})`
+in `Workflow` to validate the destinations and expose the HTML diamond. The
+Python action implements Git operations and returns the selected phase; Branch
+itself does not execute a function. A Python if/returned phase can run without
+Branch, but then the graph cannot show that global decision and its destinations
+are not branch-validated. A DOT docstring explains local logic only. Because terminal
+states have no actions, the success tail runs in the incoming action before
+returning finished. Shared runtime/renderer files stay unchanged.
+
+Each successful delivery
 posts one recipient TODO with a result link. Steering requires a matching running
 recipient with `can_supplement: true`; otherwise the mention takes the normal route.
 The sender exits silently after handoff: "Rework sent, directly and silently exit"
