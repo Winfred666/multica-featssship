@@ -111,7 +111,10 @@ states have no actions, the success tail runs in the incoming action before
 returning finished. Shared runtime/renderer files stay unchanged.
 
 Each successful delivery
-posts one recipient TODO with a result link. Steering requires a matching running
+posts one concise recipient mention without TODO, self-reference or SHA. Developer and
+MAIN labels use their configured agent names; the temporary Reviewer target is
+`6076f4d4-e65c-40c0-91f8-fdea02ff84c0` with label `reviewer`.
+Reports to MAIN retain the child feature link. Steering requires a matching running
 recipient with `can_supplement: true`; otherwise the mention takes the normal route.
 The sender exits silently after handoff: "Rework sent, directly and silently exit"
 for rework, the conditional superior wait for manual approval, and otherwise
