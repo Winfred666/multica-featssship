@@ -636,6 +636,9 @@ def main(argv=None):
     if controller and context.get('state'):
         state = context['state']
         state['output'] = output
+        if not getattr(controller, 'CACHE_VIEW', True):
+            state['output'] = {'status': state.get('status'), 'instruction': controller.workflow.states.get(
+                state.get('status'), controller.workflow.states[controller.workflow.initial]).description}
         if not context.get('state_deleted') and not context.get('state_write_failed'):
             try:
                 save_state(context, state)

@@ -3,26 +3,57 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 
 # TODO: Runtime-enforced completion belongs to https://github.com/Winfred666/multica-RSI/issues/40.
 ROUND_DONE = 'Delivery/review/work done this round, exit directly and silently'
 REWORK_DONE = 'Rework sent, directly and silently exit'
 WAIT_OUTER = 'Directly and silently exit if outer confirmation has not been received yet.'
-INSTALLATION_KEY = 'featssship.installation'
-PROCESS_KEY = 'featssship.process'
+CONFIG_KEY = 'featssship.config'
+DELEGATION_KEY = 'featssship.delegation'
+DISPATCH_KEY = 'featssship.dispatch'
 
 
-def installation_config(issue, key=INSTALLATION_KEY):
-    value = issue.get('metadata', {}).get(key, {})
+def config_ref(issue, key=CONFIG_KEY):
+    value = issue.get('metadata', {}).get(key)
     return json.loads(value) if isinstance(value, str) else value
 
 
-def process_config(issue):
-    return installation_config(issue, PROCESS_KEY)
+def link_config(issue_id, reference, key=CONFIG_KEY):
+    cli('issue', 'metadata', 'set', issue_id, '--key', key,
+        '--value', json.dumps(reference), '--type', 'string')
 
 
-def save_config(issue_id, config, key=INSTALLATION_KEY):
-    cli('issue', 'metadata', 'set', issue_id, '--key', key, '--value', json.dumps(config), '--type', 'string')
+def attachment(reference):
+    owner = cli('issue', 'get', reference['issue_id'])
+    rows = [row for row in owner.get('attachments', []) if row['filename'] == reference['filename']]
+    if not rows:
+        raise ValueError('Configuration attachment is missing: ' + json.dumps(reference))
+    return max(rows, key=lambda row: (row.get('created_at', ''), row['id']))
+
+
+def read_config(reference):
+    # TODO: Replace download/read with native deliverable preview when supported.
+    row = attachment(reference)
+    with tempfile.TemporaryDirectory(prefix='.featssship-', dir=Path.cwd()) as directory:
+        downloaded = json.loads(run('multica', 'attachment', 'download', row['id'], '--output-dir', directory))
+        return json.loads(Path(downloaded['path']).read_text())
+
+
+def write_config(reference, config, parent=None, message=' '):
+    # TODO: Replace immutable attachment revisions with native deliverable update.
+    # The stable owner/filename reference resolves the newest revision, across issues.
+    if not parent:
+        roots = cli('issue', 'comment', 'list', reference['issue_id'], '--roots-only', '--summary')
+        parent = roots[-1]['id'] if roots else None
+    with tempfile.TemporaryDirectory(prefix='.featssship-', dir=Path.cwd()) as directory:
+        path = Path(directory) / reference['filename']
+        path.write_text(json.dumps(config, indent=2) + '\n')
+        # Grilling supplies "Edit or confirm."; other revisions render empty.
+        words = ['issue', 'comment', 'add', reference['issue_id'], '--content', message, '--attachment', str(path)]
+        if parent:
+            words += ['--parent', parent]
+        return cli(*words)
 
 
 def merge_patch(config, patch):
@@ -38,27 +69,43 @@ def merge_patch(config, patch):
     return result
 
 
-def installer_config(main):
-    return installation_config(cli('issue', 'get', process_config(main)['installation_issue_id']))
+def request_config(config, installed=None):
+    """Resolve universal settings live; the delegation stores only request overrides."""
+    installed = installed if installed is not None else read_config(config['source'])
+    directions = installed['directions']
+    name = config.get('direction', directions[0]['name'] if len(directions) == 1 else None)
+    selected = next((d for d in directions if d['name'] == name), {})
+    result = {key: installed[key] for key in ('repository', 'sandbox') if key in installed}
+    result.update(parent_branch=installed.get('parent_branch', 'main'), manual=installed.get('manual', False),
+                  **{role + '_id': installed.get('installed_' + role + '_id') for role in ('delegator', 'developer', 'reviewer')},
+                  direction=name, scope=selected.get('scope', ''),
+                  question=next(iter(selected.get('questions', [])), ''))
+    result.update(config)
+    result['questions'] = config.get('questions', [result['question'], *[q for q in selected.get('questions', []) if q != result['question']]])
+    if selected and result.get('name'):
+        result.setdefault('branch', feature_branch(selected, result['name']))
+    return result
+
+
+def delegation_config(installed, request, source, main_id):
+    defaults = request_config({'source': source, 'direction': request.get('direction', installed['directions'][0]['name'] if len(installed['directions']) == 1 else None)}, installed)
+    return {'source': source, 'main_issue_id': main_id,
+            **{key: value for key, value in request.items() if key == 'direction' or value != defaults.get(key)}}
 
 
 def feature_config(issue):
-    process = process_config(issue)
-    if not process:
-        raise ValueError('MAIN must supply the issue’s process configuration before development.')
-    main = cli('issue', 'get', process['main_issue_id'])
-    installed = installer_config(main)
-    directions = process_config(main)['directions']
-    name = next(name for name, direction in directions.items()
-                if process['branch'].rsplit('/', 1)[0] == direction['branch_prefix'])
+    reference = config_ref(issue, DELEGATION_KEY)
+    if not reference:
+        raise ValueError('MAIN must link the delegation configuration before development.')
+    config = request_config(read_config(reference))
+    name = config['direction']
     project = cli('project', 'get', issue['project_id'])
     section = re.search(r'<!-- featssship:installation -->(.*?)<!-- /featssship:installation -->',
                         project.get('description', ''), re.S)
     command = re.search(r'^- ' + re.escape(name) + r':.*\n  Test: `(.*)`$', section[1] if section else '', re.M)
     if not command or not command[1].strip():
         raise ValueError('Project description needs verification guidance for direction ' + name)
-    return {**process, 'repository': installed['repository'], 'test_command': command[1],
-            **{role + '_id': installed['installed_' + role + '_id'] for role in ('developer', 'reviewer')}}
+    return {**config, 'test_command': command[1]}
 
 
 def run(*words, cwd=None, input=None):
@@ -70,15 +117,6 @@ def run(*words, cwd=None, input=None):
 
 def cli(*words, input=None):
     return json.loads(run('multica', *words, '--output', 'json', input=input))
-
-
-def block(kind, data):
-    return f'<!-- featssship:{kind} -->\n```json\n{json.dumps(data, indent=2)}\n```'
-
-
-def unpack(content, kind):
-    match = re.search(r'<!-- featssship:' + re.escape(kind) + r' -->\s*```json\n(.*?)\n```', content, re.S)
-    return json.loads(match[1]) if match else None
 
 
 def comment(issue_id, content, parent=None, *, steer_agent=None):
@@ -94,8 +132,8 @@ def comment(issue_id, content, parent=None, *, steer_agent=None):
     return cli(*words, input=content)
 
 
-def mention(agent_id, name=None):
-    name = name or cli('agent', 'get', agent_id)['name']
+def mention(agent_id):
+    name = cli('agent', 'get', agent_id)['name']
     return f'[@{name}](mention://agent/{agent_id})'
 
 

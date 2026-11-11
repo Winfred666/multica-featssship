@@ -16,6 +16,7 @@ Reviewer only reads the exact submitted diff. Do not edit source, run tests,
 merge or push. Answer the acceptance question and this issue's selected process questions
 together in one `--finding`; approve or return corrections. Live review guidance
 shows the selected questions and issue criteria.
+Reviewer can return `rework` from review or manual_approve; only Developer implements.
 For `manual: true`, Reviewer approval enters `manual_approve`. Exit silently until
 superior instruction if outer confirmation has not been received yet. ONLY outer
 allowed: a human or MAIN replies approve/rework/cancel to the review thread; Developer
@@ -48,6 +49,9 @@ sender instructions. This is guidance, not a runner-enforced stop. Failed
 delivery remains an error. Wrong-role calls exit nonzero on stderr with no JSON
 or state write.
 
-Both roles share one issue metadata record. `--help` reads guidance without
+Both roles read the same dispatch-authored delegation attachment through
+`featssship.delegation`; never create or copy a config. Configuration access
+needs only the explicit owner/filename reference, not installer ancestry.
+Both roles share one execution metadata record. `--help` reads guidance without
 advancing. Follow returned errors; reconcile writes before retrying. Use a
 returned `repaired` callback once for an assertion failure.

@@ -1,16 +1,16 @@
 """Develop and review in the issue's shared folder and branch; report to MAIN."""
 from pathlib import Path
 import os
+import json
 
-from common import ROUND_DONE, REWORK_DONE, check_repo, clean, cli, comment, entry_command, feature_config, git, has_manual, mention, run, test
+from common import DISPATCH_KEY, ROUND_DONE, REWORK_DONE, check_repo, clean, cli, comment, entry_command, feature_config, git, mention, run, test
 from sop import Branch, Completed, Option, Parameter, State, Workflow
+
+CACHE_VIEW = False
 
 REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared folder and branch. '
                  'Only read and review; do not edit source, run tests, merge or push. Cancel may invoke scripted local cleanup. '
                  'Answer the acceptance and review questions in --finding. Approve or return corrections.')
-
-# TODO: later would have share folder.
-REVIEWER_ID = '6076f4d4-e65c-40c0-91f8-fdea02ff84c0'
 
 # TODO: break agent-as-middle-layer: the runtime should stop until superior input directly.
 MANUAL_WAIT = 'Auto review pass, directly and silently exit until superior instruction, if outer confirmation has not been received yet.'
@@ -33,6 +33,8 @@ def observed(context):
     binding = feature_config(issue)
     role = 'reviewer' if context['phase'] == 'review' else 'developer'
     context.update(issue=issue, binding=binding)
+    if context['phase'] == 'manual_approve' and context['agent_id'] == binding['reviewer_id']:
+        role = 'reviewer'
     if 'result' not in context:
         require_role(context, role)
     if issue['status'] in ('done', 'in_review', 'cancelled'):
@@ -62,23 +64,22 @@ def submit(args, context):
         raise ValueError('Keep one non-merge feature commit; amend corrections. Conflict-resolution merge commits are allowed.')
     test(repo, binding['test_command'])
     ref = 'refs/heads/' + binding['branch']
-    if binding.get('manual', has_manual(context['issue'])):
+    if binding['manual']:
         git(repo, 'push', '--force-with-lease=' + ref + ':' + context['state'].get('commit', context['issue']['metadata'].get('git_base_commit', '')), 'origin', 'HEAD:' + ref)
     context['state'].update(commit=git(repo, 'rev-parse', 'HEAD'), summary=args.summary)
-    comment(context['issue_id'], mention(REVIEWER_ID, 'reviewer') +
-            ' ' + args.summary + '\n\n' + entry_command('multica-featssship-develop-review'),
-            getattr(args, 'thread', None), steer_agent=REVIEWER_ID)
+    comment(context['issue_id'], mention(binding['reviewer_id']) + ' ' + args.summary +
+            '\n\n' + entry_command('multica-featssship-develop-review'),
+            getattr(args, 'thread', None), steer_agent=binding['reviewer_id'])
     context['handoff'] = ROUND_DONE
 
 
 def outer_confirmed(args, context):
     rows = cli('issue', 'comment', 'list', context['issue_id'], '--thread', args.thread or context['state']['manual_comment_id'], '--tail', '30')
     gate = next(row for row in rows if row['id'] == context['state']['manual_comment_id'])
-    main = cli('issue', 'get', context['binding']['main_issue_id'])
     outer = next((row for row in reversed(rows) if row['id'] == args.thread or
-                  (not args.thread and (row.get('author_type') == 'member' or row.get('author_id') == main['assignee_id']))), None)
+                  (not args.thread and (row.get('author_type') == 'member' or row.get('author_id') == context['binding']['delegator_id']))), None)
     if (not outer or rows.index(outer) <= rows.index(gate)
-            or not (outer.get('author_type') == 'member' or outer.get('author_id') == main['assignee_id'])
+            or not (outer.get('author_type') == 'member' or outer.get('author_id') == context['binding']['delegator_id'])
             or outer['content'].strip().split(maxsplit=1)[0].rstrip(':').casefold() != args.event):
         raise ValueError('ONLY outer allowed: reply approve, rework or cancel after the automated review, then pass that comment with --thread.')
 
@@ -90,26 +91,23 @@ def verdict(args, context):
         approve [label="Approve; Developer owns integration"];
         inspect -> rework [label="rework"]; inspect -> approve [label="approve"]; }
     ```"""
-    require_role(context, 'reviewer' if context['phase'] == 'review' else 'developer')
-    if context['phase'] == 'manual_approve':
+    require_role(context, 'reviewer' if context['phase'] == 'review' or args.event == 'rework' else 'developer')
+    if context['phase'] == 'manual_approve' and args.event != 'rework':
         outer_confirmed(args, context)
     if args.event == 'cancel':
         context['state']['cancel_reason'] = args.reason
         return finish(context)
-    repo, binding, state = shared_repo(context), context['binding'], context['state']
-    commit = state['commit']
-    if git(repo, 'rev-parse', 'HEAD') != commit:
+    binding, state = context['binding'], context['state']
+    if not (context['phase'] == 'manual_approve' and args.event == 'rework') and git(shared_repo(context), 'rev-parse', 'HEAD') != state['commit']:
         raise ValueError('Review the exact submitted revision; changed code needs a new submission.')
     approved = args.event == 'approve'
     if approved:
         state['finding'] = args.finding
-        if context['phase'] == 'review' and binding.get('manual', has_manual(context['issue'])):
+        if context['phase'] == 'review' and binding['manual']:
             row = comment(context['issue_id'], MANUAL_WAIT + '\n\nONLY outer allowed: reply approve, rework or cancel.', args.thread)
             state['manual_comment_id'] = row['id']
             context['handoff'] = MANUAL_WAIT
             return {'phase': 'manual_approve'}
-    if context['phase'] == 'manual_approve':
-        return {'phase': 'develop'}
     comment(context['issue_id'], mention(binding['developer_id']) +
             (' Merge approved work.\n' if approved else '\n') +
             args.finding + '\n\n' + entry_command('multica-featssship-develop-review'),
@@ -138,7 +136,7 @@ def merge_approved(args, context):
         raise ValueError('Merge the exact approved revision; changed code needs a new review.')
     try:
         test(repo, binding['test_command'])
-        if binding.get('manual', has_manual(context['issue'])) and git(repo, 'ls-remote', 'origin', 'refs/heads/' + binding['branch']).split()[0] != commit:
+        if binding['manual'] and git(repo, 'ls-remote', 'origin', 'refs/heads/' + binding['branch']).split()[0] != commit:
             raise ValueError('The remote feature branch changed after submission.')
         git(repo, 'fetch', 'origin', binding['parent_branch'])
         git(repo, 'merge', '--no-edit', 'origin/' + binding['parent_branch'])
@@ -147,6 +145,7 @@ def merge_approved(args, context):
         ref = 'refs/heads/' + binding['parent_branch']
         parents = [block.splitlines()[0][9:] for block in git(repo, 'worktree', 'list', '--porcelain').split('\n\n')
                    if '\nbranch ' + ref + '\n' in '\n' + block + '\n']
+        parents = [path for path in parents if git(path, 'rev-parse', '--is-inside-work-tree') == 'true']
         if parents:
             clean(parents[0])
             git(parents[0], 'merge', '--ff-only', integrated)
@@ -183,9 +182,16 @@ def finish(context):
             return {'phase': 'develop', 'instruction': 'Parent push failed; restored the local branch/worktree for rework. Merge the latest parent, commit the resolution and submit again. ' + str(error)}
     parent = context['binding']['main_issue_id']
     main = cli('issue', 'get', parent)
-    comment(parent, mention(main['assignee_id']) +
+    comment(parent, mention(binding['delegator_id']) +
             ' Review the [Feature](mention://issue/' + context['issue_id'] + ') result.\n\n' + note,
-            steer_agent=main['assignee_id'])
+            steer_agent=binding['delegator_id'])
+    cli('issue', 'metadata', 'delete', context['issue_id'], '--key', 'git_base_commit')
+    progress = json.loads(main.get('metadata', {}).get(DISPATCH_KEY, '{}'))
+    if progress.get('issue_id') == context['issue_id']:
+        for key in ('branch_base', 'remote_reserved'):
+            progress.pop(key, None)
+        cli('issue', 'metadata', 'set', parent, '--key', DISPATCH_KEY,
+            '--value', json.dumps(progress), '--type', 'string')
     cli('issue', 'status', context['issue_id'], 'cancelled' if cancelled else 'in_review')
     context['handoff'] = ROUND_DONE
     return {'phase': 'finished', 'instruction': note + '\nReported to MAIN; end this turn.'}
@@ -198,7 +204,7 @@ workflow = Workflow(
                           params=(Parameter('--summary', 'Delivered behavior and evidence'),)),
                    Option('cancel', 'finished', 'Cancel for wrong feature scope, incomplete Git/version infrastructure, or refactoring beyond the allowed edit budget; preserve or commit edits first.', verdict,
                           params=(Parameter('--reason', 'Concrete blocker preventing this feature'),)),)),
-    State('review', REVIEW_PROMPT + '\n\nAnswer this issue’s selected questions from process metadata.',
+    State('review', REVIEW_PROMPT + '\n\nAnswer this issue’s selected questions from the shared delegation document.',
           precheck=observed, view=review_view, options=(
               Option('approve', 'approval', 'Approve the revision; manual config waits for outer approval.', verdict,
                      params=(Parameter('--finding', 'Acceptance answer and review evidence'),)),
@@ -210,8 +216,8 @@ workflow = Workflow(
     State('approve', 'Developer: automated review passed. Approve now to merge into local main, then clean up and push automatically.',
           precheck=observed, options=(Option('approve', 'merge_result', 'Merge approved work; conflict returns to development, success finishes automatically.', merge_approved),)),
     State('manual_approve', MANUAL_WAIT, precheck=observed, options=(
-        Option('rework', 'develop', 'ONLY outer allowed: send the requested corrections to Developer.', verdict,
-               params=(Parameter('--finding', 'Superior-requested corrections'),)),
+        Option('rework', 'develop', 'Reviewer: return corrections to Developer without integration.', verdict,
+               params=(Parameter('--finding', 'Review corrections or superior-requested rework'),)),
         Option('approve', 'merge_result', 'ONLY outer allowed: merge approved work, then clean up and push automatically.', merge_approved,
                params=(Parameter('--finding', 'Superior approval evidence'),)),
         Option('cancel', 'finished', 'ONLY outer allowed: cancel the feature and clean up without integration.', verdict,
