@@ -217,7 +217,7 @@ class WorkflowFixture(unittest.TestCase):
         result = self.invoke(self.developer, 'submit', '--summary', 'Updated message.txt: ' + text, plain=True)
         self.assertEqual(result.stdout, 'Delivery/review/work done this round, exit directly and silently\n')
         self.assertEqual(result.stderr, '')
-        self.assert_delivery(before, '6076f4d4-e65c-40c0-91f8-fdea02ff84c0', self.feature_id)
+        self.assert_delivery(before, self.config['reviewer_id'], self.feature_id)
         return commit
 
     def review(self, verdict):
@@ -229,17 +229,22 @@ class WorkflowFixture(unittest.TestCase):
         manual = self.state()['status'] == 'manual_approve'
         expected = ('Auto review pass, directly and silently exit until superior instruction, if outer confirmation has not been received yet.' if manual else
                     'Rework sent, directly and silently exit' if verdict == 'rework' else
-                    'Delivery/review/work done this round, exit directly and silently')
-        self.assertEqual(result.stdout, expected + '\n')
+                    None)
+        if expected:
+            self.assertEqual(result.stdout, expected + '\n')
+        else:
+            self.assertEqual(json.loads(result.stdout)['status'], 'approve')
         self.assertEqual(result.stderr, '')
-        if not manual:
+        if verdict == 'rework':
             self.assert_delivery(before, self.config['developer_id'], self.feature_id)
+        elif not manual:
+            self.assertEqual(len(self.db()['comments']), before)
         return self.state()['output']
 
     def finish(self):
-        self.invoke(self.developer)
+        self.invoke(self.reviewer, role='reviewer')
         before = len(self.db()['comments'])
-        result = self.invoke(self.developer, 'approve', plain=True)
+        result = self.invoke(self.reviewer, 'approve', role='reviewer', plain=True)
         self.repo = self.root_repo
         self.assertEqual(result.stdout, 'Delivery/review/work done this round, exit directly and silently\n')
         self.assertEqual(result.stderr, '')
@@ -306,7 +311,7 @@ class WorkflowFixture(unittest.TestCase):
             denied = self.invoke(self.reviewer, *([] if event == 'init' else [event]), role='reviewer', ok=False, plain=True)
             self.assertNotEqual(denied.returncode, 0)
             self.assertEqual(denied.stdout, '')
-            self.assertIn('belongs to developer', denied.stderr)
+            self.assertIn('belongs to Developer', denied.stderr)
             self.assertEqual(self.state(), before)
         first_commit = self.submit('almost')
         self.assertNotIn('branch', self.state())  # MAIN's binding is the single source of the name.
@@ -315,7 +320,7 @@ class WorkflowFixture(unittest.TestCase):
             denied = self.invoke(self.developer, *([] if event == 'init' else [event]), ok=False, plain=True)
             self.assertNotEqual(denied.returncode, 0)
             self.assertEqual(denied.stdout, '')
-            self.assertIn('belongs to reviewer', denied.stderr)
+            self.assertIn('belongs to Reviewer', denied.stderr)
             self.assertEqual(self.state(), before)
         self.assertEqual(self.review('rework')['status'], 'develop')
         commit = self.submit('shipped')
@@ -334,7 +339,7 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(len(self.call('git', 'worktree', 'list', '--porcelain').stdout.split('worktree ')), 2)
         self.assertEqual(self.call('git', 'branch', '--show-current').stdout.strip(), 'main')
         self.assertLessEqual(self.db()['peak_metadata_bytes'], 8192)
-        self.assertEqual(self.invoke(self.developer, plain=True).stdout,
+        self.assertEqual(self.invoke(self.reviewer, role='reviewer', plain=True).stdout,
                          'Delivery/review/work done this round, exit directly and silently\n')
         self.assertEqual(len(self.parent_notes()), 1)
 
@@ -348,8 +353,8 @@ class WorkflowFixture(unittest.TestCase):
                     'author_type': 'member', 'author_id': str(uuid.uuid4()),
                     'content': '[@Reviewer](mention://agent/' + self.config['reviewer_id'] + ') Approve.'}
         db['comments'].append(approval); self.db_path.write_text(json.dumps(db))
-        self.invoke(self.developer, '--thread', approval['id'])
-        self.invoke(self.developer, 'approve', '--thread', approval['id'], '--finding', 'Superior approved.', plain=True)
+        self.invoke(self.reviewer, '--thread', approval['id'], role='reviewer')
+        self.invoke(self.reviewer, 'approve', '--thread', approval['id'], '--finding', 'Superior approved.', role='reviewer', plain=True)
         self.repo = self.root_repo
         self.assertEqual(self.call('git', '--git-dir', str(self.remote), 'show', 'main:message.txt').stdout, 'shipped\n')
         self.assertIn('Merged ', self.parent_notes()[0])

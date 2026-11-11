@@ -1,6 +1,6 @@
 ---
 name: multica-featssship-develop-review
-description: Developer implements, tests and integrates; Reviewer only reads and returns a verdict in the same issue.
+description: Developer implements and tests; Reviewer owns review, approved integration and completion.
 ---
 
 Use the prepared feature worktree named in the issue and MAIN's configured branch. Read its
@@ -11,33 +11,26 @@ Neither role names, creates, renames or switches branches, or makes another chec
 The verdict checks that branch, repository and submitted HEAD
 in place. A claimed short name is an error, never permission to overwrite another feature.
 
-Developer implements one feature commit, amends corrections, tests and submits.
-Reviewer only reads the exact submitted diff. Do not edit source, run tests,
-merge or push. Answer the acceptance question and this issue's selected process questions
-together in one `--finding`; approve or return corrections. Live review guidance
-shows the selected questions and issue criteria.
-For `manual: true`, Reviewer approval enters `manual_approve`. Exit silently until
-superior instruction if outer confirmation has not been received yet. ONLY outer
-allowed: a human or MAIN replies approve/rework/cancel to the review thread; Developer
-executes that choice. Automated features skip this wait. No remote feature branch
-is created or pushed unless manual.
+Developer owns only `develop`: implement one feature commit, amend corrections,
+test and submit. Reviewer owns every later state, including `finished`.
+In `review`, read the exact submitted diff without source edits or tests. Answer
+acceptance and process questions together in one `--finding`; approve or rework.
+Automatic approval continues to `approve` with the same Reviewer. With
+`manual: true`, wait in `manual_approve` and exit silently until a human or MAIN
+instructs approve/rework/cancel in the review thread. Reviewer executes that choice.
+Only manual submissions push a remote feature branch.
 
-Automated approval sends Developer to `approve`; manual approval waits in
-`manual_approve`. Both approval choices call the same `merge_approved` action.
-It verifies the approved HEAD, merges and advances local main before `finished`.
-The declared merge-result diamond returns conflicts directly to develop for a
-resolution merge commit and fresh review. Success automatically deletes the
-owned local feature worktree/branch, pushes the integrated commit and reports to
-MAIN as a receipt-only note in the original dispatch thread, without waking MAIN,
-before entering terminal `finished`. There is no reported state or finish
-command. Rejected pushes restore the feature worktree for rework.
+Both approval choices run `merge_approved`: verify the approved HEAD, merge/test,
+advance local main, clean up, push and leave MAIN a receipt-only note in the
+original dispatch thread without waking MAIN. Conflicts or rejected pushes return
+to Developer in `develop` for a resolution merge commit and fresh review.
+There is no reported state or finish command. Never edit source outside `develop`.
 
 `cancel` is available in develop, review and manual_approve (ONLY outer allowed).
 Use it for wrong scope, incomplete Git/version infrastructure or refactoring
 beyond the edit budget. Preserve or commit edits first. Cancellation performs
 scripted local cleanup, marks the issue cancelled and enters finished without
-integration, tests or pushing. Reviewer may invoke cancel cleanup, but never
-perform source edits, tests or approved integration.
+integration, tests or pushing.
 
 Rework returns only "Rework sent, directly and silently exit"; only Developer may
 act in the resulting develop state. Other successful handoffs post one concise recipient

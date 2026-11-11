@@ -55,7 +55,7 @@ digraph develop_review {
   develop [label="Developer: implement, test and submit"];
   review [label="Reviewer: inspect exact revision"];
   approval [shape=diamond, label="manual config?"];
-  approve [label="Developer: auto-approved action"];
+  approve [label="Reviewer: auto-approved action"];
   manual_approve [label="manual_approve: wait for outer instruction"];
   merge_result [shape=diamond, label="Merge conflict / rework?"];
   finished [label="finished: cleaned, pushed if approved, reported", peripheries=2];
@@ -78,7 +78,7 @@ digraph develop_review {
 Both roles use the current issue folder and the same metadata record. The native
 agent ID guards each phase. MAIN's `name: tree-horizontal-more` plus installed
 `branch_prefix: feat/frontend` binds `feat/frontend/tree-horizontal-more` before dispatch.
-Developer starts directly on the issue's existing branch. Neither role names or creates it.
+Developer owns only develop; Reviewer owns all subsequent states. Neither role names or creates the branch.
 Later actions reject another branch or repository; review and integration also reject a changed HEAD.
 Dispatch prepares the metadata-selected local branch and one issue-owned worktree.
 `manual` is a boolean inherited from installation and overridable per delegation.
@@ -88,7 +88,7 @@ features stay local until their approved result is pushed to the existing parent
 Features share no branch registry or SOP-wide lock.
 A manual config adds the manual label before the child starts. Review never
 creates a checkout or switches branches. Automated review approval hands the
-Developer the `approve` action; manual approval waits in `manual_approve` for
+Reviewer the `approve` action; manual approval waits in `manual_approve` for
 human or MAIN input. Both approval options call the same `merge_approved`
 function. It checks the exact approved HEAD, merges/tests, and fast-forwards local
 main in its clean existing worktree (or atomically advances its unoccupied ref).
@@ -104,7 +104,7 @@ infrastructure or edit-budget blockers, and in manual_approve for outer
 cancellation. Preserve or commit edits first. The script deletes the local
 feature tree/branch, marks the issue cancelled and enters finished without tests,
 integration or pushes. Reviewer may invoke this fixed cleanup but remains
-read-only for source, tests and integration. Human acceptance owns done.
+read-only for source; approved integration runs the scripted checks. Human acceptance owns done.
 
 Declare `Branch('merge_result', ..., {'rework': 'develop', 'merged': 'finished'})`
 in `Workflow` to validate the destinations and expose the HTML diamond. The
@@ -113,12 +113,12 @@ itself does not execute a function. A Python if/returned phase can run without
 Branch, but then the graph cannot show that global decision and its destinations
 are not branch-validated. A DOT docstring explains local logic only. Because terminal
 states have no actions, the success tail runs in the incoming action before
-returning finished. Shared runtime/renderer files stay unchanged.
+returning finished. State owners resolve native `{id, name}` in the wrapper for actor checks, handoffs and tiny HTML labels.
 
 Each successful delivery
 posts one concise recipient mention without TODO, self-reference or SHA. Developer and
-MAIN labels use their configured agent names; the temporary Reviewer target is
-`6076f4d4-e65c-40c0-91f8-fdea02ff84c0` with label `reviewer`.
+MAIN labels use their configured agent names; Reviewer handoffs use the declared
+review state owner, just like actor checks and graph labels.
 Reports to MAIN are receipt-only notes under the original dispatch comment, using
 `[@all](mention://all/all)` to suppress implicit agent wakeups, with no agent mention
 or steering. The child feature link remains available for manual review. The dispatch

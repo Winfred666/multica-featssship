@@ -6,19 +6,22 @@ from common import ROUND_DONE, REWORK_DONE, check_repo, clean, cli, comment, ent
 from sop import Branch, Completed, Option, Parameter, State, Workflow
 
 REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared folder and branch. '
-                 'Only read and review; do not edit source, run tests, merge or push. Cancel may invoke scripted local cleanup. '
+                 'Review without source edits or tests; after approval, own scripted integration, push and completion. '
                  'Answer the acceptance and review questions in --finding. Approve or return corrections.')
-
-# TODO: later would have share folder.
-REVIEWER_ID = '6076f4d4-e65c-40c0-91f8-fdea02ff84c0'
 
 # TODO: break agent-as-middle-layer: the runtime should stop until superior input directly.
 MANUAL_WAIT = 'Auto review pass, directly and silently exit until superior instruction, if outer confirmation has not been received yet.'
 
 
-def require_role(context, role):
-    if context['agent_id'] != context['binding'][role + '_id']:
-        raise SystemExit('Rejected: this action belongs to ' + role + '.')
+def owner(role):
+    return lambda context: cli('agent', 'get', context['binding'][role + '_id'])
+
+
+def handoff(args, context, owner):
+    comment(context['issue_id'], mention(owner['id'], owner['name']) + ' ' +
+            (args.summary if args.event == 'submit' else args.finding if args.event == 'rework' else context['result']['next_step']['instruction']) + '\n\n' + entry_command('multica-featssship-develop-review'),
+            args.thread, steer_agent=owner['id'])
+    context['handoff'] = REWORK_DONE if context['phase'] == 'develop' else ROUND_DONE
 
 
 def review_view(context):
@@ -30,11 +33,7 @@ def review_view(context):
 
 def observed(context):
     issue = cli('issue', 'get', context['issue_id'])
-    binding = feature_config(issue)
-    role = 'reviewer' if context['phase'] == 'review' else 'developer'
-    context.update(issue=issue, binding=binding)
-    if 'result' not in context:
-        require_role(context, role)
+    context.update(issue=issue, binding=feature_config(issue))
     if issue['status'] in ('done', 'in_review', 'cancelled'):
         context['handoff'] = ROUND_DONE
         raise Completed(ROUND_DONE)
@@ -55,7 +54,6 @@ def submit(args, context):
     digraph submit { node [shape=box]; check [label="Verify repository, MAIN branch and one feature commit"];
         push [label="Test; push only if manual; request Reviewer"]; check -> push; }
     ```"""
-    require_role(context, 'developer')
     repo, binding = shared_repo(context), context['binding']
     git(repo, 'fetch', 'origin', binding['parent_branch'])
     if git(repo, 'rev-list', '--count', '--no-merges', 'origin/' + binding['parent_branch'] + '..HEAD') != '1':
@@ -65,10 +63,6 @@ def submit(args, context):
     if binding.get('manual', has_manual(context['issue'])):
         git(repo, 'push', '--force-with-lease=' + ref + ':' + context['state'].get('commit', context['issue']['metadata'].get('git_base_commit', '')), 'origin', 'HEAD:' + ref)
     context['state'].update(commit=git(repo, 'rev-parse', 'HEAD'), summary=args.summary)
-    comment(context['issue_id'], mention(REVIEWER_ID, 'reviewer') +
-            ' ' + args.summary + '\n\n' + entry_command('multica-featssship-develop-review'),
-            getattr(args, 'thread', None), steer_agent=REVIEWER_ID)
-    context['handoff'] = ROUND_DONE
 
 
 def outer_confirmed(args, context):
@@ -86,40 +80,30 @@ def verdict(args, context):
     """```dot
     digraph verdict { node [shape=box]; inspect [label="Read submitted revision"];
         rework [label="Return corrections to Developer"];
-        approve [label="Approve; Developer owns integration"];
+        approve [label="Approve; Reviewer owns integration"];
         inspect -> rework [label="rework"]; inspect -> approve [label="approve"]; }
     ```"""
-    require_role(context, 'reviewer' if context['phase'] == 'review' else 'developer')
     if context['phase'] == 'manual_approve':
         outer_confirmed(args, context)
     if args.event == 'cancel':
         context['state']['cancel_reason'] = args.reason
         return finish(context)
     repo, binding, state = shared_repo(context), context['binding'], context['state']
-    commit = state['commit']
-    if git(repo, 'rev-parse', 'HEAD') != commit:
+    if git(repo, 'rev-parse', 'HEAD') != state['commit']:
         raise ValueError('Review the exact submitted revision; changed code needs a new submission.')
-    approved = args.event == 'approve'
-    if approved:
+    if args.event == 'approve':
         state['finding'] = args.finding
-        if context['phase'] == 'review' and binding.get('manual', has_manual(context['issue'])):
+        if binding.get('manual', has_manual(context['issue'])):
             row = comment(context['issue_id'], MANUAL_WAIT + '\n\nONLY outer allowed: reply approve, rework or cancel.', args.thread)
             state['manual_comment_id'] = row['id']
             context['handoff'] = MANUAL_WAIT
             return {'phase': 'manual_approve'}
-    if context['phase'] == 'manual_approve':
-        return {'phase': 'develop'}
-    comment(context['issue_id'], mention(binding['developer_id']) +
-            (' Merge approved work.\n' if approved else '\n') +
-            args.finding + '\n\n' + entry_command('multica-featssship-develop-review'),
-            getattr(args, 'thread', None), steer_agent=binding['developer_id'])
-    context['handoff'] = ROUND_DONE if approved else REWORK_DONE
-    return {'phase': 'approve' if approved else 'develop'}
+    return {'phase': 'approve' if args.event == 'approve' else 'develop'}
 
 
 def merge_approved(args, context):
     """```dot
-    digraph merge_approved { node [shape=box]; check [label="Developer: verify approved HEAD"];
+    digraph merge_approved { node [shape=box]; check [label="Reviewer: verify approved HEAD"];
         merge [label="Merge parent; test and advance local main"];
         conflict [shape=diamond, label="Merge conflict?"];
         rework [label="Resolve merge; commit and resubmit"];
@@ -127,7 +111,6 @@ def merge_approved(args, context):
         check -> merge -> conflict; conflict -> rework [label="yes"];
         conflict -> finish [label="no"]; }
     ```"""
-    require_role(context, 'developer')
     if context['phase'] == 'manual_approve':
         outer_confirmed(args, context)
         context['state']['finding'] += '\nOuter approval: ' + args.finding
@@ -190,13 +173,13 @@ def finish(context):
 
 workflow = Workflow(
     State('develop', 'Developer: implement the issue request on MAIN’s feature branch in the current issue folder. '
-          'Keep one non-merge feature commit; amend corrections. Conflict-resolution merge commits are allowed. Test and submit.', initial=True, precheck=observed,
+          'Keep one non-merge feature commit; amend corrections. Conflict-resolution merge commits are allowed. Test and submit.', initial=True, precheck=observed, owner=owner('developer'),
           options=(Option('submit', 'review', 'Test and request independent review; push only if manual.', submit,
                           params=(Parameter('--summary', 'Delivered behavior and evidence'),)),
                    Option('cancel', 'finished', 'Cancel for wrong feature scope, incomplete Git/version infrastructure, or refactoring beyond the allowed edit budget; preserve or commit edits first.', verdict,
                           params=(Parameter('--reason', 'Concrete blocker preventing this feature'),)),)),
     State('review', REVIEW_PROMPT + '\n\nAnswer this issue’s selected questions from process metadata.',
-          precheck=observed, view=review_view, options=(
+          precheck=observed, owner=owner('reviewer'), view=review_view, options=(
               Option('approve', 'approval', 'Approve the revision; manual config waits for outer approval.', verdict,
                      params=(Parameter('--finding', 'Acceptance answer and review evidence'),)),
               Option('rework', 'develop', 'Send corrections to Developer.', verdict,
@@ -204,9 +187,9 @@ workflow = Workflow(
               Option('cancel', 'finished', 'Cancel for wrong scope, incomplete Git/version infrastructure or refactoring beyond the edit budget; script cleans locally without merging or pushing.', verdict,
                      params=(Parameter('--reason', 'Concrete cancellation blocker'),)))),
     Branch('approval', 'manual config?', {'manual': 'manual_approve', 'automatic': 'approve'}),
-    State('approve', 'Developer: automated review passed. Approve now to merge into local main, then clean up and push automatically.',
-          precheck=observed, options=(Option('approve', 'merge_result', 'Merge approved work; conflict returns to development, success finishes automatically.', merge_approved),)),
-    State('manual_approve', MANUAL_WAIT, precheck=observed, options=(
+    State('approve', 'Reviewer: automated review passed. Approve now to merge into local main, then clean up and push automatically.',
+          precheck=observed, owner=owner('reviewer'), options=(Option('approve', 'merge_result', 'Merge approved work; conflict returns to development, success finishes automatically.', merge_approved),)),
+    State('manual_approve', MANUAL_WAIT, precheck=observed, owner=owner('reviewer'), options=(
         Option('rework', 'develop', 'ONLY outer allowed: send the requested corrections to Developer.', verdict,
                params=(Parameter('--finding', 'Superior-requested corrections'),)),
         Option('approve', 'merge_result', 'ONLY outer allowed: merge approved work, then clean up and push automatically.', merge_approved,
@@ -215,6 +198,6 @@ workflow = Workflow(
                params=(Parameter('--reason', 'Superior cancellation reason'),)),
     )),
     Branch('merge_result', 'Merge conflict / rework?', {'rework': 'develop', 'merged': 'finished'}),
-    State('finished', 'Local cleanup and any approved push completed; reported to MAIN. End this turn.', final=True),
-    params=(Parameter('--thread', 'Native triggering comment UUID', required=False),),
+    State('finished', 'Local cleanup and any approved push completed; reported to MAIN. End this turn.', final=True, owner=owner('reviewer')),
+    params=(Parameter('--thread', 'Native triggering comment UUID', required=False),), handoff=handoff,
 )

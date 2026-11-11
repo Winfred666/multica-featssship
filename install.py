@@ -90,8 +90,8 @@ def agent(config, role, issue):
     if not selected:
         settings = config[role]
         instructions = {'delegator': 'Only draft and delegate features with the installed featssship skill, then receive results.',
-                        'developer': 'Implement, test and submit for independent review with the installed featssship skill.',
-                        'reviewer': 'Only read the submitted revision and return approval or corrections with the installed featssship skill; do not edit, test, merge or push.'}
+                        'developer': 'Own only development: implement, test, correct and submit with the installed featssship skill.',
+                        'reviewer': 'Review the submitted revision, then own approval, scripted integration, push and completion with the installed featssship skill; return source corrections to Developer.'}
         words = ['agent', 'create', '--name', settings['name'], '--runtime-id', settings['runtime_id'],
                  '--model', settings['model'], '--instructions', instructions[role]]
         if settings.get('thinking_level'):
@@ -187,7 +187,7 @@ def execute(config, issue, state, save_state):
         cli('project', 'update', project['id'], '--description', project_text)
     root_text = section(root.get('description'),
                         'MAIN drafts and delegates features. '
-                        'Developer implements and owns approved integration; Reviewer only returns a verdict.\n\nRun `' + shlex.join(['python3', str(repo / '.agents/skills' / name / 'wrapper.py')]) + '` from the target repository root.')
+                        'Developer implements and tests; Reviewer owns review, approved integration and completion.\n\nRun `' + shlex.join(['python3', str(repo / '.agents/skills' / name / 'wrapper.py')]) + '` from the target repository root.')
     title = 'MAIN DEV: ' + re.sub(r'^(?:MAIN DEV:\s*)+', '', root['title'])
     cli('issue', 'update', root['id'], '--title', title, '--description-stdin', '--no-start', input=root_text)
     destination = repo / '.agents' / 'skills'

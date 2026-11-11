@@ -1,7 +1,6 @@
 # multica-featssship
 
-MAIN delegates, Developer implements and integrates, and Reviewer independently
-approves or requests corrections.
+MAIN delegates; Developer implements and tests; Reviewer reviews and ships.
 
 ## Install
 
@@ -36,9 +35,8 @@ Do not search for or ask the human to create a separate MAIN issue.
 ## Shipping overview
 
 Describe a feature on MAIN. MAIN settles its config and delegates to Developer.
-Reviewer approves or requests corrections in the same feature issue. Developer
-owns verification and approved integration, then reports the result to MAIN.
-Human acceptance owns completion.
+Reviewer approves or requests corrections in the same feature issue, then owns
+approved integration, push and completion. Developer handles source corrections.
 
 DEBUG mode publishes HTML state graphs during runs. See [workflow details](docs/workflow.md)
 for development and protocol documentation.

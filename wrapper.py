@@ -253,6 +253,12 @@ def validate_result(result, phase, workflow, args):
         raise ValueError('Only an accepted agent callback may advance the phase')
 
 
+def state_owner(workflow, phase, context):
+    owner = workflow.states[phase].owner
+    owner = owner(context) if callable(owner) else owner
+    return {key: owner[key] for key in ('id', 'name')} if owner else None
+
+
 def transition(args, context, controller):
     workflow = controller.workflow
     phases = set(workflow.states)
@@ -296,6 +302,7 @@ def transition(args, context, controller):
         else:
             context['phase'] = phase
             context['args'] = args
+            result = None
             try:
                 initial = assertion_before(workflow, context)
             except Exception as error:
@@ -305,7 +312,10 @@ def transition(args, context, controller):
                 context.pop('assertion', None)
                 initial = context.get('initial')
                 result = error.result
-            else:
+            owner = state_owner(workflow, result['phase'] if result else phase, context)
+            if owner and context['agent_id'] != owner['id']:
+                raise SystemExit('Rejected: this action belongs to ' + owner['name'] + '.')
+            if result is None:
                 if args.error is not None or args.error_file is not None:
                     message = args.error if args.error is not None else args.error_file.read_text(encoding='utf-8')
                     hint = next((hint for pattern, hint in PATTERNS if re.search(pattern, message)), None)
@@ -356,6 +366,9 @@ def transition(args, context, controller):
     if alternatives:
         result['next_step']['alternatives'] = [callback(choice['instruction'], choice['callback'])
                                                 for choice in alternatives]
+    owner = state_owner(workflow, next_phase, context)
+    if result['accepted'] and workflow.handoff and owner and owner['id'] != context['agent_id'] and not context.get('handoff'):
+        workflow.handoff(args, context, owner)
     finished = workflow.states[next_phase].final
     changed = before != (None if finished else status)
     result.update(ok=invalid is None, status=status, finished=finished,
@@ -487,7 +500,9 @@ def state_artifact(context, controller, result):
     states = controller.workflow.states
     quote = json.dumps
     diagram = 'digraph workflow {\nrankdir=LR; bgcolor="transparent";\nnode [shape=box];\n'
-    diagram += '\n'.join(f'{quote(name)} [id={quote("state_" + name)}];' for name in states)
+    diagram += '\n'.join(f'{quote(name)} [id={quote("state_" + name)}, label=<{escape(name)}' +
+                         (f'<br/><font point-size="9">{escape(owner["name"])}</font>'
+                          if (owner := state_owner(controller.workflow, name, context)) else '') + '>];' for name in states)
     for branch in controller.workflow.branches.values():
         diagram += f'\n{quote(branch.name)} [shape=diamond, label={quote(branch.description)}];'
         diagram += '\n' + '\n'.join(f'{quote(branch.name)} -> {quote(target)} [label={quote(label)}];'

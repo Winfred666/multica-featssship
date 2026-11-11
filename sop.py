@@ -37,8 +37,8 @@ class Option:
 
 class State:
     def __init__(self, name, description, *, initial=False, final=False,
-                 options=(), precheck=None, view=None):
-        self.name, self.description = name, description
+                 options=(), precheck=None, view=None, owner=None):
+        self.name, self.description, self.owner = name, description, owner
         self.initial, self.final = initial, final
         self.options, self.precheck, self.view = options, precheck, view
 
@@ -61,10 +61,10 @@ class Branch:
 
 
 class Workflow:
-    def __init__(self, *nodes, params=()):
+    def __init__(self, *nodes, params=(), handoff=None):
         self.states = {node.name: node for node in nodes if isinstance(node, State)}
         self.branches = {node.name: node for node in nodes if isinstance(node, Branch)}
-        self.params = tuple(params)
+        self.params, self.handoff = tuple(params), handoff
         states = tuple(self.states.values())
         initial = [state for state in states if state.initial]
         final = [state for state in states if state.final]
