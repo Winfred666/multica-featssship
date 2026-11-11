@@ -1,7 +1,35 @@
 # Shipping flow
 
-Installer creates its own parked MAIN child and configures roles, returning one
-self-contained missing question per invocation. MAIN then clarifies the request and passes a short name;
+Installation has two states:
+
+```dot
+digraph installation {
+  rankdir=LR; node [shape=box];
+  grilling [label="grilling: align config with the requested workflow"];
+  finished [label="finished: MAIN process config copied; installer done"];
+  grilling -> grilling [label="edit JSON merge patch; comment config; ask edit or confirm; exit silently"];
+  grilling -> finished [label="confirmed by human: install roles/skills and create/reuse MAIN"];
+}
+```
+
+Defaults and field comments guide each edit toward the requested workflow. Keep
+settings that already fit, and edit again as needed. Ask one human question only
+when context leaves something unclear. Editing does not create
+roles, skills or MAIN. Confirmation must be a human reply after the latest config
+comment. The human only replies `confirm`; the agent runs `confirmed` and the
+script finds that reply automatically. The JSON role key is `delegator`, while
+the child issue keeps its `MAIN DEV:` title. Installation metadata alone owns
+init settings and proven installed_* checkpoints; there are no local answers or binding JSON files. MAIN is discovered
+among installer children and subscribes CEO. On success only direction questions
+(string lists) and branch prefixes are copied to MAIN process metadata; the installer
+enters done. A feature receives only its selected questions, full branch, parent
+branch and inherited sandbox process settings. Identities and init defaults resolve
+through ancestry. The project description receives repository/scope/test context,
+never questions or installed IDs. Upgrades replace only the installer's marked
+block and remove the previous full-config record from MAIN.
+The installer action graphs live in [its controller](../roles/installation.py).
+
+MAIN then clarifies the request and passes a short name;
 the configured direction prefix formats the feature branch. The child uses its
 native issue folder for one shared [procedure](../roles/feature.py):
 
@@ -42,14 +70,12 @@ not enforced turn completion or a measured token saving; enforcement belongs to
 the runner ([multica-RSI#40](https://github.com/Winfred666/multica-RSI/issues/40)).
 Wrong-role action calls exit nonzero on stderr without JSON or writes.
 
-Select `review` in the HTML graph to see the two default questions from
-[`common.QUESTIONS`](../common.py). A running review also shows the issue's
-request, scope and configured acceptance question. MAIN sets that question with
-`propose --question` and can revise it with `edit --question` before dispatch.
-Reviewer receives the questions together in one `review` state and returns one
-`--finding` with `approve` or `rework`. Their order is presentation order, not
-per-question stepping or parallel reviewer tasks. MAIN's clarification loop
-still asks the human one question at a time.
+Select `review` to inspect the issue's criteria and selected process questions.
+Installation initializes each direction's string-list `questions`; MAIN copies
+only the selected direction's list into a feature, together with its feature-specific
+Acceptance question. Reviewer returns one `--finding` with `approve` or `rework`.
+Question order is presentation order, not per-question stepping or parallel tasks.
+MAIN's clarification loop still asks the human one question at a time.
 
 The HTML graph comes from `Workflow`; action docstrings explain local logic.
 `DEBUG` defaults to `true` in the root and newly built packages' `config.json`.

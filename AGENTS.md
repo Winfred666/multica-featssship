@@ -8,7 +8,7 @@ Declare global routing in Workflow and local action logic in short DOT docstring
 
 The first assigned prototype issue is explicitly authorized to develop and commit directly on `main`. It carries `dev` and `manual`; human review owns acceptance. Verify its repository and branch before editing. Report the prototype in its native issue and wait for human acceptance. Do not create a PR unless requested.
 
-Installation is a resumable README-guided script in its assigned installer issue. It creates its own MAIN DEV: child, derives workspace/project from the installer, and returns one self-contained unanswered question per invocation. Never search for a MAIN root or ask the human for an existing root UUID. Reuse saved child/agent IDs on resumption. Root delegation is the only root SOP; Developer and Reviewer share one fixed feature skill; acceptance questions come from their issue. Use standalone repository-owned procedures and native Multica CLI actions. The product must not invoke system distribution, review or delivery SOP skills.
+Installation is a resumable README-guided script in its assigned installer issue. It creates its own MAIN DEV: child, derives workspace/project from the installer, and uses only grilling and finished states. Grilling updates only the settings needed for the requested workflow, keeps choices that already fit, and allows repeated edits. Ask a human question only when context cannot resolve uncertainty. Human confirmation gates all installation writes. Never search for a MAIN root or ask the human for an existing root UUID. Reuse saved child/agent IDs on resumption. Root delegation is the only root SOP; Developer and Reviewer share one fixed feature skill; acceptance questions come from their issue. Use standalone repository-owned procedures and native Multica CLI actions. The product must not invoke system distribution, review or delivery SOP skills.
 
 Developer and Reviewer have distinct native identities and separate contexts. Keep source edits, tests and approved integration with Developer. Reviewer only reads and returns approval or corrections. MAIN drafts the delegation, uses grilling to resolve one point per human question and edit, then dispatches directly and receives results. Preserve the original request, acceptance question, minimum review questions and review/rework loop.
 
@@ -21,15 +21,20 @@ MAIN passes a short feature name; the installed direction prefix formats its bra
 ## Implementation notes
 
 Run local checks with `python3 -m unittest discover -s tests -v`. Build packages
-with `packages.build('delegation', ..., binding=config)` or
+with `packages.build('delegation', ...)` or
 `packages.build('feature', ...)`; each validates via `wrapper.py --validate`.
 Use the [RSI creator](https://github.com/Winfred666/multica-RSI/blob/main/harness/skills/create-symbolic-sop/scripts/check.py)
 for generic runtime protocol and renderer checks, not another copy here.
 
-An existing installation's saved `root_issue_id` supports upgrades only. Preserve
-its identity, history, labels and status. Bind skills additively and publish the
-selected directions in the project description. Missing answers return one
-`needs_input` object and exit; never open an interactive questionnaire.
+Find MAIN among the installation issue's children; subscribe CEO. Preserve its
+identity, history, labels and status. Bind skills additively. Installation metadata
+is the only source of truth: no local answers or binding JSON. Keep init settings
+and proven installed_* checkpoints on the installer. Copy only direction questions
+(string lists) and branch prefixes to MAIN process metadata. Features receive only
+the selected questions, branch, parent branch and inherited sandbox settings.
+Resolve identities and init defaults through ancestry. Project context may include
+repository/scope/tests, never review questions or installed IDs. After edit, comment
+tidy JSON, ask the human to edit or confirm, and tell the agent to exit silently.
 
 The feature procedure stores one current record under
 `issue.metadata["sop.multica-featssship-develop-review"]`; completion removes only

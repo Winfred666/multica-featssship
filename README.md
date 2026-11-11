@@ -8,54 +8,42 @@ integrates, and Reviewer independently approves or requests corrections.
 Requires Python 3.11+, Git and authenticated `multica`.
 
 1. Create an installation issue in the target Multica project and assign an
-   installer agent. Give it this README and any known runtime/model choices.
-2. Tell the installer which repository needs featssship. If it is not known,
-   the installer asks: **Which target repository needs featssship?** Give the
-   Git URL of the code you want to ship, not necessarily this repository.
-3. Answer one question at a time about each direction's name, code scope,
-   acceptance question and test command. Choose distinct Developer and Reviewer
-   agents, or the runtimes and models for creating them.
-4. Installation creates its own `MAIN DEV:` child issue. MAIN defaults to the
-   installer's runtime and model. Continue on that child when setup is complete;
-   you do not need to find or create a separate MAIN issue.
+   installer agent. Give it this README, the target repository and any known
+   directions or runtime/model choices.
+2. The installer posts the config. Reply with changes or `confirm`.
+3. After confirmation, the script installs the workflow, creates a `MAIN DEV:`
+   child and subscribes CEO. Continue on MAIN to ship features.
 
 ### For the installer agent
 
-Reuse an available featssship checkout and facts already supplied. Run:
+Keep a featssship source checkout available until installation finishes. In the
+assigned installation issue, run from the **target repository checkout**:
 
 ```bash
-python3 /path/to/multica-featssship/install.py \
-  --config /path/outside-repository/featssship-answers.json
+python3 /path/to/multica-featssship/install.py
 ```
 
-When the script returns `needs_input`, ask only its `question` in the triggering
-thread and end the turn. Save the reply under the returned `field` in the answers
-file, then rerun the same command. A field such as `directions.0.scope` means
-`scope` in the first direction. Keep the same answers file throughout.
+Follow the returned commands. Adjust only settings that need changing; ask one
+human question only when context cannot resolve a choice. On comment triggers,
+add `--thread <trigger UUID>`.
 
-Once the target repository is known, resume from its checkout root. Keep answers
-and generated files out of Git. Reuse supplied agent IDs; resolve runtime choices
-from the catalog instead of asking the human for UUIDs. On success, use the
-returned command on the returned MAIN child, not the installation issue.
+After `edit`, exit silently as instructed. The human replies only `confirm`;
+then run the returned `confirmed` command. Resume interrupted setup in the same
+installation issue and target checkout.
 
 ## Ship a feature
 
-On the MAIN child, describe the requested change, direction and acceptance
-criteria. MAIN uses the installed delegation command from the target repository:
+Tell MAIN the requested change, direction and acceptance criteria. The MAIN
+agent runs its installed delegation skill from the target repository and chooses:
 
 ```text
-propose --name tree-horizontal-more --request REQUEST --direction NAME --scope SCOPE --question QUESTION
+propose --name short-feature-name --request REQUEST --direction NAME
 ```
 
-MAIN clarifies one point at a time with the human, uses `edit` to record each
-answer, then calls `dispatch`. Give a short feature name; the selected direction
-formats it as, for example, `feat/frontend/tree-horizontal-more`. Use
-`--github-issue URL` to link a source issue when needed.
+MAIN follows the returned choices to clarify only what is unclear, then dispatches.
 
-Developer implements and submits. Reviewer reads the submitted revision and
-approves it or requests corrections in the same issue. Developer owns tests and
-approved integration, then sends MAIN one verified result. A manual label keeps
-integration pending human action. Human acceptance owns completion.
+Developer implements and tests; Reviewer approves or requests corrections.
+Developer integrates approved work and reports to MAIN. A `manual` label keeps
+integration pending human action. Human acceptance closes the issue.
 
-The agents' HTML state graphs show the current step during a run. See the
-[shipping flow](docs/workflow.md) for the full graph.
+See [workflow internals](docs/workflow.md) for state graphs and storage details.

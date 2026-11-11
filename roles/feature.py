@@ -2,7 +2,7 @@
 from pathlib import Path
 import subprocess
 
-from common import QUESTIONS, ROUND_DONE, check_repo, clean, cli, comment, entry_command, git, has_manual, mention, test, unpack
+from common import ROUND_DONE, check_repo, clean, cli, comment, entry_command, feature_config, git, has_manual, mention, test
 from sop import Completed, Option, Parameter, State, Workflow
 
 REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared folder and branch. '
@@ -18,14 +18,13 @@ def require_role(context, role):
 def review_view(context):
     # The issue owns the request and review criteria; omit only the runtime instructions/binding.
     request = context['issue']['description'].rsplit('\n\n' + entry_command('multica-featssship-develop-review'), 1)[0]
-    return {'instruction': REVIEW_PROMPT + '\n\nIssue criteria (read-only reference):\n' + request}
+    return {'instruction': REVIEW_PROMPT + '\n\nIssue criteria (read-only reference):\n' + request +
+            '\n\nReview questions:\n' + '\n'.join('- ' + q for q in context['binding']['questions'])}
 
 
 def observed(context):
     issue = cli('issue', 'get', context['issue_id'])
-    binding = unpack(issue['description'], 'binding')
-    if not binding:
-        raise ValueError('MAIN must supply the issue’s feature configuration before development.')
+    binding = feature_config(issue)
     role = 'reviewer' if context['phase'] == 'review' else 'developer'
     context.update(issue=issue, binding=binding)
     if 'result' not in context:
@@ -52,8 +51,8 @@ def submit(args, context):
     ```"""
     require_role(context, 'developer')
     repo, binding = shared_repo(context), context['binding']
-    git(repo, 'fetch', 'origin', 'main')
-    if git(repo, 'rev-list', '--count', 'origin/main..HEAD') != '1':
+    git(repo, 'fetch', 'origin', binding['parent_branch'])
+    if git(repo, 'rev-list', '--count', 'origin/' + binding['parent_branch'] + '..HEAD') != '1':
         raise ValueError('Keep one feature commit; amend corrections before submitting.')
     test(repo, binding['test_command'])
     ref = 'refs/heads/' + binding['branch']
@@ -107,10 +106,10 @@ def integrate(args, context):
             test(repo, binding['test_command'])
             if git(repo, 'ls-remote', 'origin', 'refs/heads/' + binding['branch']).split()[0] != commit:
                 raise ValueError('The remote feature branch changed after submission.')
-            git(repo, 'fetch', 'origin', 'main')
-            git(repo, 'merge', '--no-edit', 'origin/main')
+            git(repo, 'fetch', 'origin', binding['parent_branch'])
+            git(repo, 'merge', '--no-edit', 'origin/' + binding['parent_branch'])
             test(repo, binding['test_command'])
-            git(repo, 'push', 'origin', 'HEAD:refs/heads/main')
+            git(repo, 'push', 'origin', 'HEAD:refs/heads/' + binding['parent_branch'])
             note = 'Merged ' + git(repo, 'rev-parse', 'HEAD') + ': ' + state['summary'] + '\nReview: ' + state['finding']
         except ValueError as error:
             subprocess.run(['git', 'merge', '--abort'], cwd=repo, capture_output=True)
@@ -130,8 +129,7 @@ workflow = Workflow(
           'Keep one feature commit; amend corrections. Test and submit.', initial=True, precheck=observed,
           options=(Option('submit', 'review', 'Test, push and request independent review.', submit,
                           params=(Parameter('--summary', 'Delivered behavior and evidence'),)),)),
-    State('review', REVIEW_PROMPT + '\n\nDefault review questions:\n' + '\n'.join('- ' + q for q in QUESTIONS) +
-          '\n\nAlso answer the feature-specific Acceptance question from this issue.',
+    State('review', REVIEW_PROMPT + '\n\nAnswer this issue’s selected questions from process metadata.',
           precheck=observed, view=review_view, options=(
               Option('approve', 'integrate', 'Approve the revision and return integration to Developer.', verdict,
                      params=(Parameter('--finding', 'Acceptance answer and review evidence'),)),

@@ -54,6 +54,13 @@ def main():
         result['description'] = option('description')
     elif args[:2] == ['issue', 'get']:
         result = db['issues'][args[2]]
+    elif args[:2] == ['issue', 'children']:
+        result = {'stages': [], 'unstaged': [row for row in db['issues'].values() if row.get('parent_issue_id') == args[2]]}
+    elif args[:3] == ['issue', 'subscriber', 'add']:
+        users = db.setdefault('subscribers', {}).setdefault(args[3], [])
+        if option('user') not in users:
+            users.append(option('user'))
+        result = {'ok': True}
     elif args[:2] == ['issue', 'metadata']:
         result = db['issues'][args[3]]
         metadata = result.setdefault('metadata', {})

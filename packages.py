@@ -5,13 +5,13 @@ import subprocess
 import sys
 import zipfile
 
-from common import cli, write_json
+from common import cli
 
 ROOT = Path(__file__).resolve().parent
 RUNTIME = ('wrapper.py', 'sop.py', 'monitor.py', 'config.json', 'common.py')
 
 
-def build(role, destination, *, name=None, binding=None):
+def build(role, destination, *, name=None):
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     for filename in RUNTIME:
@@ -21,13 +21,15 @@ def build(role, destination, *, name=None, binding=None):
     if role == 'delegation':
         for filename in ('controller.py', 'SKILL.md', 'github_issue.py'):
             shutil.copyfile(ROOT / filename, destination / filename)
-        write_json(destination / 'installation.json', binding)
+    elif role == 'installation':
+        shutil.copyfile(ROOT / 'roles/installation.py', destination / 'controller.py')
+        shutil.copyfile(ROOT / 'roles/installation.md', destination / 'SKILL.md')
     else:
         if role != 'feature':
             raise ValueError('Build delegation or feature.')
         shutil.copyfile(ROOT / 'roles/feature.py', destination / 'controller.py')
         shutil.copyfile(ROOT / 'roles/feature.md', destination / 'SKILL.md')
-    for filename in ('DEBUG.md', 'entry.py', 'commit_report.py'):
+    for filename in ('DEBUG.md', 'entry.py', 'commit_report.py', 'installation.json'):
         (destination / filename).unlink(missing_ok=True)
     if role == 'feature':
         (destination / 'github_issue.py').unlink(missing_ok=True)
