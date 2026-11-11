@@ -28,7 +28,8 @@ It verifies the approved HEAD, merges and advances local main before `finished`.
 The declared merge-result diamond returns conflicts directly to develop for a
 resolution merge commit and fresh review. Success automatically deletes the
 owned local feature worktree/branch, pushes the integrated commit and reports to
-MAIN before entering terminal `finished`. There is no reported state or finish
+MAIN as a receipt-only note in the original dispatch thread, without waking MAIN,
+before entering terminal `finished`. There is no reported state or finish
 command. Rejected pushes restore the feature worktree for rework.
 
 `cancel` is available in develop, review and manual_approve (ONLY outer allowed).

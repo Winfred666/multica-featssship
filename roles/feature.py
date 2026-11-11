@@ -78,9 +78,8 @@ def outer_confirmed(args, context):
     outer = next((row for row in reversed(rows) if row['id'] == args.thread or
                   (not args.thread and (row.get('author_type') == 'member' or row.get('author_id') == main['assignee_id']))), None)
     if (not outer or rows.index(outer) <= rows.index(gate)
-            or not (outer.get('author_type') == 'member' or outer.get('author_id') == main['assignee_id'])
-            or outer['content'].strip().split(maxsplit=1)[0].rstrip(':').casefold() != args.event):
-        raise ValueError('ONLY outer allowed: reply approve, rework or cancel after the automated review, then pass that comment with --thread.')
+            or not (outer.get('author_type') == 'member' or outer.get('author_id') == main['assignee_id'])):
+        raise ValueError('ONLY outer allowed: pass the superior instruction after the automated review with --thread.')
 
 
 def verdict(args, context):
@@ -182,10 +181,8 @@ def finish(context):
             run('git', '--git-dir', str(common), 'worktree', 'add', str(repo), binding['branch'])
             return {'phase': 'develop', 'instruction': 'Parent push failed; restored the local branch/worktree for rework. Merge the latest parent, commit the resolution and submit again. ' + str(error)}
     parent = context['binding']['main_issue_id']
-    main = cli('issue', 'get', parent)
-    comment(parent, mention(main['assignee_id']) +
-            ' Review the [Feature](mention://issue/' + context['issue_id'] + ') result.\n\n' + note,
-            steer_agent=main['assignee_id'])
+    comment(parent, '[@all](mention://all/all) Note: [Feature](mention://issue/' + context['issue_id'] + ') result.\n\n' + note,
+            binding['dispatch_thread'])
     cli('issue', 'status', context['issue_id'], 'cancelled' if cancelled else 'in_review')
     context['handoff'] = ROUND_DONE
     return {'phase': 'finished', 'instruction': note + '\nReported to MAIN; end this turn.'}

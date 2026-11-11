@@ -91,7 +91,11 @@ def comment(issue_id, content, parent=None, *, steer_agent=None):
                     and row.get('can_supplement') is True):
                 words += ['--steer', row['id']]
                 break
-    return cli(*words, input=content)
+    result = cli(*words, input=content)
+    if steer_agent and any(row['target_id'] == steer_agent and row['status'] == 'blocked'
+                           for row in result.get('trigger_outcomes', [])):
+        raise ValueError('Comment posted but recipient delivery was blocked; inspect trigger_outcomes before retrying: ' + json.dumps(result))
+    return result
 
 
 def mention(agent_id, name=None):

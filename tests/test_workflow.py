@@ -15,6 +15,17 @@ from common import INSTALLATION_KEY, PROCESS_KEY, comment, feature_branch, insta
 
 
 class DeliveryRoutingTests(unittest.TestCase):
+    def test_blocked_recipient_is_not_a_successful_handoff(self):
+        for status in ('queued', 'coalesced', 'deferred', 'steered', 'blocked'):
+            response = {'id': 'posted', 'trigger_outcomes': [
+                {'target_id': 'recipient', 'status': status}]}
+            with self.subTest(status=status), patch('common.cli', side_effect=[[], response]):
+                if status == 'blocked':
+                    with self.assertRaisesRegex(ValueError, 'Comment posted but recipient delivery was blocked'):
+                        comment('issue', 'handoff', steer_agent='recipient')
+                else:
+                    self.assertEqual(comment('issue', 'handoff', steer_agent='recipient'), response)
+
     def test_configured_short_branch_names(self):
         for prefix in ('feat/frontend', 'fix/cli'):
             self.assertEqual(feature_branch({'name': 'work', 'branch_prefix': prefix}, 'tree-horizontal-more'),
@@ -172,7 +183,12 @@ class WorkflowFixture(unittest.TestCase):
             config['title'] = '[Message: ship requested text](' + self.db()['github']['url'] + ')'
         if github:
             config['github_issue'] = self.db()['github']['url']
-        self.invoke(self.root_package, '--config', json.dumps(config), role='delegator', issue=self.ids['root'])
+        db = self.db()
+        self.dispatch_thread = str(uuid.uuid4())
+        db['comments'].append({'id': self.dispatch_thread, 'issue_id': self.ids['root'],
+                               'parent_id': None, 'author_type': 'member', 'content': 'Ship message.'})
+        self.db_path.write_text(json.dumps(db))
+        self.invoke(self.root_package, '--thread', self.dispatch_thread, '--config', json.dumps(config), role='delegator', issue=self.ids['root'])
 
     def delegation(self):
         return installation_config(self.db()['issues'][self.ids['root']], 'featssship.delegation')
@@ -228,7 +244,15 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(result.stdout, 'Delivery/review/work done this round, exit directly and silently\n')
         self.assertEqual(result.stderr, '')
         self.assertEqual(self.state(), {})
-        self.assert_delivery(before, self.config['delegator_id'], self.ids['root'])
+        note = self.db()['comments'][before:]
+        self.assertEqual(len(note), 1)
+        self.assertEqual(note[0]['issue_id'], self.ids['root'])
+        self.assertEqual(note[0]['parent_id'], self.dispatch_thread)
+        self.assertIn('[@all](mention://all/all) Note:', note[0]['content'])
+        self.assertNotIn('mention://agent/', note[0]['content'])
+        self.assertNotIn('Review the', note[0]['content'])
+        posted = [call for call in self.db()['calls'] if call[:4] == ['issue', 'comment', 'add', self.ids['root']]][-1]
+        self.assertNotIn('--steer', posted)
 
     def assert_delivery(self, before, recipient, issue):
         rows = self.db()['comments'][before:]
@@ -321,7 +345,8 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(self.review('approve')['status'], 'manual_approve')
         db = self.db()
         approval = {'id': str(uuid.uuid4()), 'issue_id': self.feature_id, 'parent_id': self.state()['manual_comment_id'],
-                    'author_type': 'member', 'author_id': str(uuid.uuid4()), 'content': 'approve'}
+                    'author_type': 'member', 'author_id': str(uuid.uuid4()),
+                    'content': '[@Reviewer](mention://agent/' + self.config['reviewer_id'] + ') Approve.'}
         db['comments'].append(approval); self.db_path.write_text(json.dumps(db))
         self.invoke(self.developer, '--thread', approval['id'])
         self.invoke(self.developer, 'approve', '--thread', approval['id'], '--finding', 'Superior approved.', plain=True)
@@ -531,7 +556,7 @@ class WorkflowFixture(unittest.TestCase):
         process['sandbox'] = {'policy': 'inherited-native-policy'}
         db['issues'][self.ids['root']]['metadata'][PROCESS_KEY] = json.dumps(process)
         self.db_path.write_text(json.dumps(db))
-        output = self.invoke(self.root_package, '--config', json.dumps({'name': 'ship-message', 'request': 'Write shipped.',
+        output = self.invoke(self.root_package, '--thread', str(uuid.uuid4()), '--config', json.dumps({'name': 'ship-message', 'request': 'Write shipped.',
                             'direction': 'message'}), role='delegator', issue=self.ids['root'])
         spec = json.loads(output['instruction'].split('Current config:\n')[1])
         self.assertEqual(spec['scope'], self.config['directions'][0]['scope'])
@@ -568,7 +593,7 @@ class WorkflowFixture(unittest.TestCase):
     def test_grilling_metadata_and_cross_task_dispatch_recovery(self):
         self.install()
         # Partial first activation must remain editable, without a propose stage or child.
-        initial = self.invoke(self.root_package, '--config', '{"direction":"message"}',
+        initial = self.invoke(self.root_package, '--thread', str(uuid.uuid4()), '--config', '{"direction":"message"}',
                               role='delegator', issue=self.ids['root'])
         self.assertEqual(initial['status'], 'grilling')
         initial_config = json.loads(initial['instruction'].split('Current config:\n')[1])

@@ -101,6 +101,8 @@ def dispatch(args, context):
     if missing:
         return {'accepted': False, 'instruction': view(context)['instruction'] +
                 '\n\nFill from context or ask one question about: ' + ', '.join(missing)}
+    if not record.get('thread'):
+        raise ValueError('Pass the original MAIN request comment with --thread before dispatch.')
     selected = process['directions'].get(request['direction'])
     if not selected:
         raise ValueError('Choose a configured direction: ' + ', '.join(process['directions']))
@@ -150,7 +152,7 @@ def dispatch(args, context):
         cli('issue', 'label', 'add', child['id'], label['id'])
     child_process = {'questions': [request['question'], *[q for q in selected['questions'] if q != request['question']]],
                      'branch': branch, 'parent_branch': parent_branch, 'manual': request['manual'],
-                     'main_issue_id': context['issue_id']}
+                     'main_issue_id': context['issue_id'], 'dispatch_thread': record['thread']}
     if 'sandbox' in process:
         child_process['sandbox'] = process['sandbox']
     save_config(child['id'], child_process, PROCESS_KEY)
