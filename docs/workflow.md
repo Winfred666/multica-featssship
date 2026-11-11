@@ -115,7 +115,12 @@ read-only for source, tests and integration. Human acceptance owns done.
 
 Each successful delivery
 posts one concise recipient mention using the configured agent name, without
-TODO, self-reference or SHA; reports to MAIN retain the feature link. Steering requires a matching running
+TODO, self-reference or SHA. Reports to MAIN are receipt-only notes under the
+original dispatch comment, using `[@all](mention://all/all)` without agent mentions
+or steering. The delegation attachment retains that request's dispatch thread.
+The acting agent interprets superior instructions; scripts verify identity and
+ordering, not literal approval wording. Blocked recipient delivery fails the
+handoff. Steering requires a matching running
 recipient with `can_supplement: true`; otherwise the mention takes the normal route.
 The sender exits silently after handoff: "Rework sent, directly and silently exit"
 for rework, the conditional superior wait for manual approval, and otherwise

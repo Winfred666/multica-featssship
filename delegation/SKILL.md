@@ -15,6 +15,8 @@ read the JSON. Metadata never stores settings. Use `edit --patch '<JSON merge pa
 record changes. Ask one human question only when context leaves a field uncertain;
 otherwise dispatch. If waiting for an outer reply, exit directly and silently if outer confirmation has not been received yet. The document reference and child checkpoint remain after dispatch.
 A new request uses a new `--thread` and `--config`; a retry reuses its existing child.
+Dispatch requires the original request comment so completion can leave a receipt-only
+note in that same thread without waking MAIN.
 
 Give a short `name` such as `tree-horizontal-more`; the installed direction prefix
 formats the branch, for example `feat/frontend/tree-horizontal-more`. `title` is optional. `manual` is a boolean, default false; only manual features publish a remote feature branch and wait for superior approval.

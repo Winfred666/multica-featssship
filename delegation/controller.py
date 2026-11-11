@@ -105,12 +105,15 @@ def dispatch(args, context):
     if missing:
         return {'accepted': False, 'instruction': view(context)['instruction'] +
                 '\n\nFill from context or ask one question about: ' + ', '.join(missing)}
+    if not record.get('thread'):
+        raise ValueError('Pass the original MAIN request comment with --thread before dispatch.')
     directions = context['installed']['directions']
     selected = next((d for d in directions if d['name'] == request['direction']), None)
     if not selected:
         raise ValueError('Choose a configured direction: ' + ', '.join(d['name'] for d in directions))
     if not record.get('issue_id'):
-        document = {**read_config(context['reference']), 'direction': request['direction'], 'branch': request['branch']}
+        document = {**read_config(context['reference']), 'direction': request['direction'],
+                    'branch': request['branch'], 'dispatch_thread': record['thread']}
         write_config(context['reference'], document, args.thread or context['state'].get('reply_parent'))
     branch = request['branch']
     title = request.get('title') or request['name']
