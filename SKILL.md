@@ -11,6 +11,9 @@ Follow `drafting` and `grilling`. To reopen a draft in a new native task, pass
 `--spec <draft UUID>` and choose `propose`.
 
 An optional GitHub URL is a source link for mirroring and closure. Scope and
-acceptance come from the delegation config. Never create GitHub issues
-routinely. MAIN receives the final result and ends the turn when instructed.
+acceptance come from the delegation config. Reuse a supplied GitHub issue.
+Proactively create one only for a valuable or impressive feature after the user
+explicitly approves its creation during delegation; pass its URL as
+`--github-issue`. Never create feature issues for trivial fixtures or very minor
+features. MAIN receives the final result and ends the turn when instructed.
 [State and callback graphs](DEBUG.md). Installation: README.md.
