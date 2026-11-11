@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 import re
 import subprocess
-import tempfile
 
 QUESTIONS = (
     'Does the solution preserve the requested demand without shifting scope?',
@@ -11,6 +10,38 @@ QUESTIONS = (
 )
 # TODO: Runtime-enforced completion belongs to https://github.com/Winfred666/multica-RSI/issues/40.
 ROUND_DONE = 'Delivery/review/work done this round, exit directly and silently'
+INSTALLATION_KEY = 'featssship.installation'
+PROCESS_KEY = 'featssship.process'
+
+
+def installation_config(issue, key=INSTALLATION_KEY):
+    value = issue.get('metadata', {}).get(key, {})
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def process_config(issue):
+    return installation_config(issue, PROCESS_KEY)
+
+
+def save_config(issue_id, config, key=INSTALLATION_KEY):
+    cli('issue', 'metadata', 'set', issue_id, '--key', key, '--value', json.dumps(config), '--type', 'string')
+
+
+def installer_config(main):
+    return installation_config(cli('issue', 'get', main['parent_issue_id']))
+
+
+def feature_config(issue):
+    process = process_config(issue)
+    if not process:
+        raise ValueError('MAIN must supply the issue’s process configuration before development.')
+    main = cli('issue', 'get', issue['parent_issue_id'])
+    installed = installer_config(main)
+    command = re.search(r'Verification command:\n```sh\n(.*?)\n```', issue['description'], re.S)
+    if not command:
+        raise ValueError('The feature must include its verification command.')
+    return {**process, 'repository': installed['repository'], 'test_command': command[1],
+            **{role + '_id': installed['installed_' + role + '_id'] for role in ('developer', 'reviewer')}}
 
 
 def run(*words, cwd=None, input=None):
@@ -22,15 +53,6 @@ def run(*words, cwd=None, input=None):
 
 def cli(*words, input=None):
     return json.loads(run('multica', *words, '--output', 'json', input=input))
-
-
-def write_json(path, data):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as stream:
-        json.dump(data, stream, indent=2)
-        temporary = Path(stream.name)
-    temporary.replace(path)
 
 
 def block(kind, data):
@@ -70,7 +92,7 @@ def git(repo, *words):
 def feature_branch(direction, name):
     if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', name):
         raise ValueError('Give a short kebab-case feature name, such as tree-horizontal-more.')
-    branch = direction.get('branch_prefix', 'feat/' + direction['name']) + '/' + name
+    branch = (direction.get('branch_prefix') or 'feat/' + direction['name']) + '/' + name
     run('git', 'check-ref-format', '--branch', branch)
     return branch
 

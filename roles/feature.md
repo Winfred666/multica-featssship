@@ -13,9 +13,9 @@ in place. A claimed short name is an error, never permission to overwrite anothe
 
 Developer implements one feature commit, amends corrections, tests and submits.
 Reviewer only reads the exact submitted diff. Do not edit source, run tests,
-merge or push. Answer the acceptance question and both default review questions
-together in one `--finding`; approve or return corrections. The HTML review node
-shows the defaults and live review guidance includes the issue's criteria.
+merge or push. Answer the acceptance question and this issue's selected process questions
+together in one `--finding`; approve or return corrections. Live review guidance
+shows the selected questions and issue criteria.
 Approval returns integration to Developer. Developer verifies the approved HEAD,
 tests, integrates and reports to MAIN. A manual label, conflict or failed
 integration sends a note to MAIN and finishes.

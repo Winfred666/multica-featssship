@@ -1,18 +1,16 @@
 """The only root SOP: dispatch one feature and let MAIN receive its result."""
-import json
-from pathlib import Path
 
-from common import QUESTIONS, block, cli, comment, entry_command, feature_branch, has_manual, unpack
+from common import PROCESS_KEY, block, cli, comment, entry_command, feature_branch, has_manual, installer_config, process_config, save_config, unpack
 from github_issue import issue_link, mirror_title
 from sop import Option, Parameter, State, Workflow
 
-ROOT = Path(__file__).resolve().parent
 SPEC_PARAMS = (
     Parameter('--name', 'Short feature name, such as tree-horizontal-more'),
     Parameter('--title', 'Feature/fix title; defaults to the short name', required=False),
     Parameter('--request', 'Requested behavior'),
-    Parameter('--direction', 'Configured direction name'), Parameter('--scope', 'Feature/fix scope'),
-    Parameter('--question', 'Acceptance question'),
+    Parameter('--direction', 'Configured direction name'),
+    Parameter('--scope', 'Feature/fix scope; defaults to the configured direction', required=False),
+    Parameter('--question', 'Acceptance question; defaults to the configured direction', required=False),
     Parameter('--test-command', 'Verification command; defaults to the configured direction', required=False),
     Parameter('--github-issue', 'Optional existing GitHub source issue URL', required=False),
 )
@@ -20,11 +18,13 @@ EDIT_PARAMS = tuple(Parameter(param.flag, param.prompt, required=False) for para
 
 
 def configured(context):
-    config = json.loads((ROOT / 'installation.json').read_text())
-    if (context['workspace_id'], context['issue_id'], context['agent_id']) != (config['workspace_id'], config['root_issue_id'], config['main_id']):
+    main = cli('issue', 'get', context['issue_id'])
+    config = process_config(main)
+    if (not config or context['workspace_id'] != main['workspace_id']
+            or context['agent_id'] != main['assignee_id']):
         context['state'] = {}
-        raise context['error']('wrong_agent', 'Delegation belongs to the configured MAIN root and native identity.')
-    context['config'] = config
+        raise context['error']('wrong_agent', 'Delegation belongs to the MAIN child and its native assignee.')
+    context.update(config=config, main=main, installed=installer_config(main))
     if context['args'].thread:
         context['state']['reply_parent'] = context['args'].thread
     if context['args'].spec:
@@ -33,9 +33,9 @@ def configured(context):
 
 
 def direction(config, name):
-    selected = next((d for d in config['directions'] if d['name'] == name), None)
+    selected = config['directions'].get(name)
     if not selected:
-        raise ValueError('Choose a configured direction: ' + ', '.join(d['name'] for d in config['directions']))
+        raise ValueError('Choose a configured direction: ' + ', '.join(config['directions']))
     return selected
 
 
@@ -52,7 +52,7 @@ def read_spec(context):
         raise ValueError('Draft a specification first, or reopen it with --spec <draft comment UUID>.')
     rows = cli('issue', 'comment', 'list', context['issue_id'], '--thread', target, '--tail', '30')
     drafts = [(unpack(row.get('content', ''), 'spec'), row) for row in rows
-              if row.get('author_type') == 'agent' and row.get('author_id') == context['config']['main_id']
+              if row.get('author_type') == 'agent' and row.get('author_id') == context['main']['assignee_id']
               and unpack(row.get('content', ''), 'spec')]
     if not drafts:
         raise ValueError('This thread has no MAIN specification draft.')
@@ -77,10 +77,12 @@ def propose(args, context):
         return {'instruction': f'Read draft comment {row["id"]}. ' + workflow.states['grilling'].description}
     selected = direction(context['config'], args.direction)
     spec = {key: getattr(args, key) for key in ('name', 'request', 'direction', 'scope', 'question')}
+    init = next(d for d in context['installed']['directions'] if d['name'] == args.direction)
+    spec['scope'] = args.scope or init['scope']
+    spec['question'] = args.question or selected['questions'][0]
     spec['title'] = args.title or args.name
     spec['branch'] = feature_branch(selected, args.name)
-    spec['test_command'] = args.test_command or selected['test_command']
-    spec['questions'] = list(QUESTIONS)
+    spec['test_command'] = args.test_command or init['test_command']
     url = issue_link(spec['title'], args.github_issue)
     if url:
         spec['github_issue'] = url
@@ -146,12 +148,12 @@ def dispatch(args, context):
     owned = context['state'].setdefault('dispatch', {})
     if owned.get('spec_id', spec_row['id']) != spec_row['id']:
         raise ValueError('The dispatch checkpoint belongs to a different draft.')
-    previous = next((row for row in rows if row.get('author_type') == 'agent' and row.get('author_id') == config['main_id']
+    previous = next((row for row in rows if row.get('author_type') == 'agent' and row.get('author_id') == context['main']['assignee_id']
                      and (unpack(row.get('content', ''), 'dispatch') or {}).get('spec_id') == spec_row['id']), None)
     if previous:
         owned.update(unpack(previous['content'], 'dispatch'), main_thread_id=previous['id'])
         child = cli('issue', 'get', owned['issue_id'])
-        if unpack(child['description'], 'binding') and child['status'] != 'backlog':
+        if process_config(child) and child['status'] != 'backlog':
             return {'instruction': 'Already dispatched; end this turn.'}
     binding = dict(request)
     url = request.get('github_issue')
@@ -159,7 +161,7 @@ def dispatch(args, context):
         binding['title'] = mirror_title(request['title'], url)
     if 'issue_id' not in owned:
         child = cli('issue', 'create', '--title', binding['title'], '--description-stdin', '--parent', context['issue_id'],
-                    '--project', config['project_id'], '--assignee-id', config['developer_id'], '--status', 'backlog', input=binding['request'])
+                    '--project', context['main']['project_id'], '--assignee-id', context['installed']['installed_developer_id'], '--status', 'backlog', input=binding['request'])
         owned.update(issue_id=child['id'], spec_id=spec_row['id'])
         context['save_state']()
     binding['issue_id'] = owned['issue_id']
@@ -174,13 +176,18 @@ def dispatch(args, context):
                       args.thread or context['state'].get('reply_parent') or spec_row['id'])
         owned['main_thread_id'] = row['id']
         context['save_state']()
-    description = (binding['request'] + '\n\nScope: ' + binding['scope'] + '\n\nAcceptance: ' + binding['question'] +
-                   '\n\n' + '\n'.join('- ' + q for q in binding['questions']) + '\n\n' + entry_command('multica-featssship-develop-review') +
+    questions = [binding['question'], *[q for q in selected['questions'] if q != binding['question']]]
+    process = {'questions': questions, 'branch': binding['branch'],
+               'parent_branch': parent.get('metadata', {}).get('git_branch', 'main')}
+    if 'sandbox' in config:
+        process['sandbox'] = config['sandbox']
+    save_config(binding['issue_id'], process, PROCESS_KEY)
+    description = (binding['request'] + '\n\nScope: ' + binding['scope'] +
+                   '\n\nAcceptance: ' + binding['question'] +
+                   '\n\nVerification command:\n```sh\n' + binding['test_command'] + '\n```\n\n' +
+                   entry_command('multica-featssship-develop-review') +
                    '\n\nMAIN selected branch: ' + binding['branch'] + '. Developer and Reviewer use this existing branch '
-                   'in the shared issue folder from the start; '
-                   'do not create a review checkout or switch branches.\n\n' +
-                   block('binding', {key: config[key] for key in ('developer_id', 'reviewer_id', 'repository')} |
-                         {key: binding[key] for key in ('branch', 'test_command')}))
+                   'in the shared issue folder from the start; do not create a review checkout or switch branches.')
     cli('issue', 'update', binding['issue_id'], '--description-stdin', '--no-start', input=description)
     child = cli('issue', 'get', binding['issue_id'])
     if child['status'] == 'backlog':
