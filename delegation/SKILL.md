@@ -24,7 +24,7 @@ explicitly approves its creation during delegation; set `github_issue` in the
 delegation config to its URL. Never create feature issues for trivial fixtures or
 very minor features. MAIN receives the final result and ends the turn when instructed.
 Use `--help` to replay the saved decision, or read this body for a new/completed issue flow.
-Installation: README.md.
+Installation: the featssship source README and `installation/wrapper.py`.
 
 In every state, follow returned error guidance and finish unmet prerequisites
 before retrying. Reconcile writes first. For assertion failures, use the returned

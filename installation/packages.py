@@ -8,27 +8,31 @@ import zipfile
 from common import cli
 
 ROOT = Path(__file__).resolve().parent
+# Source checkout: sibling bundle. Standalone installer: bundled child.
+DELEGATION = ROOT / 'delegation' if (ROOT / 'delegation').is_dir() else ROOT.parent / 'delegation'
+SOURCES = {'installation': ROOT, 'delegation': DELEGATION, 'feature': DELEGATION / 'dev-rev'}
 RUNTIME = ('wrapper.py', 'sop.py', 'monitor.py', 'config.json', 'common.py')
 
 
 def build(role, destination, *, name=None):
+    if role not in SOURCES:
+        raise ValueError('Build installation, delegation or feature.')
+    source = SOURCES[role]
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     for filename in RUNTIME:
         if filename == 'config.json' and (destination / filename).exists():
             continue
-        shutil.copyfile(ROOT / filename, destination / filename)
+        shutil.copyfile(source / filename, destination / filename)
+    for filename in ('controller.py', 'SKILL.md'):
+        shutil.copyfile(source / filename, destination / filename)
     if role == 'delegation':
-        for filename in ('controller.py', 'SKILL.md', 'github_issue.py'):
-            shutil.copyfile(ROOT / filename, destination / filename)
+        shutil.copyfile(source / 'github_issue.py', destination / 'github_issue.py')
     elif role == 'installation':
-        shutil.copyfile(ROOT / 'roles/installation.py', destination / 'controller.py')
-        shutil.copyfile(ROOT / 'roles/installation.md', destination / 'SKILL.md')
-    else:
-        if role != 'feature':
-            raise ValueError('Build delegation or feature.')
-        shutil.copyfile(ROOT / 'roles/feature.py', destination / 'controller.py')
-        shutil.copyfile(ROOT / 'roles/feature.md', destination / 'SKILL.md')
+        for filename in ('install.py', 'packages.py'):
+            shutil.copyfile(source / filename, destination / filename)
+        build('delegation', destination / 'delegation')
+        build('feature', destination / 'delegation/dev-rev')
     for filename in ('DEBUG.md', 'entry.py', 'commit_report.py', 'installation.json'):
         (destination / filename).unlink(missing_ok=True)
     if role == 'feature':

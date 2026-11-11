@@ -1,6 +1,10 @@
 # Developing multica-featssship
 
-Read README.md and docs/workflow.md. Build the smallest complete Developer–Reviewer prototype using the bundled Symbolic-SoP runtime. Keep this repository atomic; do not add submodules.
+Read README.md and docs/workflow.md. Source SoPs live in `installation/`,
+`delegation/` and `delegation/dev-rev/`. Keep procedure scripts and runtime files
+inside these folders. Build the smallest complete Developer–Reviewer prototype
+using the bundled Symbolic-SoP runtime. Keep this repository atomic; do not add
+submodules.
 
 Keep one commit per feature. Amend corrections and finish verification before pushing.
 
@@ -21,8 +25,9 @@ MAIN passes a short feature name; the installed direction prefix formats its bra
 ## Implementation notes
 
 Run local checks with `python3 -m unittest discover -s tests -v`. Build packages
-with `packages.build('delegation', ...)` or
-`packages.build('feature', ...)`; each validates via `wrapper.py --validate`.
+from `installation/` with `packages.build('installation', ...)`,
+`packages.build('delegation', ...)` or `packages.build('feature', ...)`; each
+validates via its `wrapper.py --validate`.
 Use the [RSI creator](https://github.com/Winfred666/multica-RSI/blob/main/harness/skills/create-symbolic-sop/scripts/check.py)
 for generic runtime protocol and renderer checks, not another copy here.
 

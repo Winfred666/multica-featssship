@@ -27,7 +27,7 @@ branch, manual boolean and inherited sandbox process settings. Identities and in
 through ancestry. The project description receives repository/scope/test context,
 never questions or installed IDs. Upgrades replace only the installer's marked
 block and remove the previous full-config record from MAIN.
-The installer action graphs live in [its controller](../roles/installation.py).
+The installer action graphs live in [its controller](../installation/controller.py).
 
 MAIN delegation also has only `grilling` and `finished` states. Pass the known
 request config with `--config` on first activation; it starts in grilling. Use
@@ -42,7 +42,7 @@ description; MAIN does not copy it from installation metadata.
 
 MAIN passes a short name;
 the configured direction prefix formats the feature branch. The child uses its
-prepared issue worktree for one shared [procedure](../roles/feature.py):
+prepared issue worktree for one shared [procedure](../delegation/dev-rev/controller.py):
 
 ```dot
 digraph develop_review {
@@ -130,9 +130,15 @@ MAIN's clarification loop still asks the human one question at a time, exiting
 silently if outer confirmation has not been received yet.
 
 The HTML graph comes from `Workflow`; action docstrings explain local logic.
-`DEBUG` defaults to `true` in the root and newly built packages' `config.json`.
+`DEBUG` defaults to `true` in each procedure folder and newly built packages' `config.json`.
 During native runs, each state change or completion publishes an HTML graph
 highlighting the actual resulting state. Selecting a node only inspects its
 guidance; it does not advance the workflow. Package rebuilds retain existing
 settings, so enable `DEBUG` explicitly in older packages. No renderer service
 is required.
+
+Source entry points are `installation/wrapper.py`, `delegation/wrapper.py` and
+`delegation/dev-rev/wrapper.py`. Each loads the controller and runtime beside it;
+no generated checkout-local installer or root controller is needed. Package
+building lives in `installation/packages.py`. Runtime copies remain unchanged
+and standalone; no additional symbolic-SoP template directory is needed.

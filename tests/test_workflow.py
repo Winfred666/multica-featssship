@@ -10,7 +10,7 @@ from unittest.mock import patch
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / 'installation'))
 from common import INSTALLATION_KEY, PROCESS_KEY, comment, feature_branch, installation_config, process_config, unpack
 
 
@@ -122,7 +122,7 @@ class WorkflowFixture(unittest.TestCase):
     def installer(self, *args, ok=True):
         env = {**self.env, 'MULTICA_ISSUE_ID': self.ids['installer'],
                'MULTICA_AGENT_ID': self.ids['main'], 'MULTICA_WORKSPACE_ID': self.ids['workspace']}
-        result = self.call(sys.executable, str(ROOT / 'install.py'), *args, env=env, ok=ok)
+        result = self.call(sys.executable, str(getattr(self, 'installer_entry', ROOT / 'installation/install.py')), *args, env=env, ok=ok)
         return json.loads(result.stdout)
 
     def installation_reply(self, content='confirm', *, author='member', parent=None):
@@ -253,6 +253,33 @@ class WorkflowFixture(unittest.TestCase):
         self.call('git', 'add', filename, cwd=other)
         self.call('git', 'commit', '-m', 'Concurrent change', cwd=other)
         self.call('git', 'push', 'origin', 'main', cwd=other)
+
+    def test_standalone_bundles_and_packaged_installer(self):
+        from packages import build
+        env = {**self.env, 'MULTICA_ISSUE_ID': self.ids['installer'],
+               'MULTICA_WORKSPACE_ID': self.ids['workspace']}
+        for role, relative in (('installation', 'installation'), ('delegation', 'delegation'),
+                               ('feature', 'delegation/dev-rev')):
+            source = ROOT / relative
+            isolated = self.base / role
+            isolated.mkdir()
+            for path in source.iterdir():
+                if path.is_file():
+                    shutil.copyfile(path, isolated / path.name)
+            for directory in (isolated, build(role, self.base / (role + '-package'))):
+                self.assertEqual(json.loads(self.call(sys.executable, str(directory / 'wrapper.py'),
+                                                     '--validate', env=env).stdout)['status'], 'valid')
+                help_text = self.call(sys.executable, str(directory / 'wrapper.py'), '--help', env=env).stdout
+                self.assertEqual(help_text.strip(), (directory / 'SKILL.md').read_text().split('---', 2)[2].strip())
+            package = self.base / (role + '-package')
+            (package / 'config.json').write_text('{"DEBUG": false}\n')
+            build(role, package)
+            self.assertFalse(json.loads((package / 'config.json').read_text())['DEBUG'])
+        # Installation must work without importing from the featssship checkout.
+        self.installer_entry = self.base / 'installation-package' / 'wrapper.py'
+        self.install()
+        self.dispatch()
+        self.assertEqual(self.invoke(self.developer)['status'], 'develop')
 
     def test_two_agent_correction_merge_and_minimal_binding(self):
         self.install()
@@ -514,7 +541,6 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(main['status'], 'in_progress')
         self.assertEqual(main['title'], 'MAIN DEV: Existing shipping root')
         self.assertFalse((self.root_package / 'installation.json').exists())
-        self.assertFalse((ROOT / '.multica/featssship/installer/installation.json').exists())
         self.assertEqual(set(process_config(main)['directions']['message']), {'questions', 'branch_prefix'})
         process = process_config(main)
         process['sandbox'] = {'policy': 'inherited-native-policy'}

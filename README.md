@@ -22,7 +22,7 @@ Reuse an available featssship checkout. In the assigned installation issue,
 run from the **target repository checkout**:
 
 ```bash
-python3 /path/to/multica-featssship/install.py
+python3 /path/to/multica-featssship/installation/wrapper.py
 ```
 
 Follow the returned editing and confirmation guidance. On a comment trigger,
@@ -38,3 +38,41 @@ Human acceptance owns completion.
 
 DEBUG mode publishes HTML state graphs during runs. See [workflow details](docs/workflow.md)
 for development and protocol documentation.
+
+## Source bundles
+
+```text
+installation/        README-guided installer and package builder
+delegation/           MAIN request configuration and dispatch
+delegation/dev-rev/   Shared Developer–Reviewer procedure
+```
+
+Each folder is a standard symbolic-SoP with its own `SKILL.md`, `controller.py`,
+`wrapper.py`, `sop.py`, `monitor.py` and runtime `config.json`. Run its `wrapper.py`
+from the target repository root. `installation/install.py` is an equivalent
+installer entry point. Skill names and issue metadata keys are unchanged.
+
+The bundles carry identical copies of the shared runtime and `common.py` so
+that delegation and dev-rev run without the installer or source checkout. No
+separate `templates/symbolic-sop/` is retained; the procedure folders contain the
+runtime they use. Use the RSI creator for runtime maintenance.
+
+`config.json` contains runtime settings only (`DEBUG`). Installation settings,
+MAIN request config and child process config still live in issue metadata.
+Delegation and dev-rev request configurations are authored when needed and copied
+to sub-issues by the existing workflow, not stored as repository JSON drafts.
+
+From `installation/`, call `packages.build('installation', destination)`,
+`packages.build('delegation', destination)` or `packages.build('feature', destination)`.
+The `feature` build selects `delegation/dev-rev/`; it keeps the installed name
+`multica-featssship-develop-review`. Each build validates its wrapper and preserves
+an existing runtime config. A standalone installer package includes delegation
+and dev-rev as child bundles so confirmation can build and install both skills
+without reaching back into this checkout.
+
+Run local checks from this repository root:
+
+```bash
+python3 -m unittest discover -s tests -v
+git diff --check
+```

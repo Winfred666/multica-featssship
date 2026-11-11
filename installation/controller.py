@@ -1,12 +1,9 @@
 """Two-stage installation: edit on the installer, confirm into MAIN metadata."""
 import json
-from pathlib import Path
-import sys
 
 from common import WAIT_OUTER, block, cli, comment, save_config, unpack
 from sop import Completed, Option, Parameter, State, Workflow
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from install import defaults, execute, merge_patch
 
 # TODO: Breaks the agent-as-middle-layer principle: the script cannot proactively

@@ -3,8 +3,11 @@ name: multica-featssship-installation
 description: Adjust config for the requested workflow, then install after human confirmation.
 ---
 
-Use only on the assigned installation issue. README.md in the featssship source
-owns entry via install.py. Keep that source checkout available until finished.
+Use only on the assigned installation issue. From the target repository root,
+run `python3 <this-skill-directory>/wrapper.py` and follow its choices.
+The source README documents installation; `installation/install.py` is an
+equivalent entry. Keep the source checkout or standalone installer package
+available until finished.
 In grilling, update only what is needed for the requested workflow. Keep settings
 that already fit, and return to editing as needed. Ask one human question only
 when context leaves something unclear. Pass

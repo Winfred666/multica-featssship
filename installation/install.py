@@ -194,5 +194,4 @@ def execute(config, issue):
 
 
 if __name__ == '__main__':
-    package = build('installation', Path(__file__).resolve().parent / '.multica/featssship/installer')
-    raise SystemExit(subprocess.call([sys.executable, str(package / 'wrapper.py'), *sys.argv[1:]]))
+    raise SystemExit(subprocess.call([sys.executable, str(Path(__file__).with_name('wrapper.py')), *sys.argv[1:]]))
