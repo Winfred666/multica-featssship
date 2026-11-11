@@ -5,30 +5,36 @@ import subprocess
 import sys
 import zipfile
 
-from common import cli, write_json
+from common import cli
 
 ROOT = Path(__file__).resolve().parent
-RUNTIME = ('wrapper.py', 'sop.py', 'monitor.py', 'config.json', 'common.py', 'commit_report.py', 'github_issue.py', 'entry.py', 'packages.py')
+RUNTIME = ('wrapper.py', 'sop.py', 'monitor.py', 'config.json', 'common.py')
 
 
-def build(role, destination, *, name=None, binding=None):
+def build(role, destination, *, name=None):
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     for filename in RUNTIME:
+        if filename == 'config.json' and (destination / filename).exists():
+            continue
         shutil.copyfile(ROOT / filename, destination / filename)
     if role == 'delegation':
-        for filename in ('controller.py', 'SKILL.md', 'DEBUG.md'):
+        for filename in ('controller.py', 'SKILL.md', 'github_issue.py'):
             shutil.copyfile(ROOT / filename, destination / filename)
-        shutil.copytree(ROOT / 'roles', destination / 'roles', dirs_exist_ok=True)
-        write_json(destination / 'installation.json', binding)
+    elif role == 'installation':
+        shutil.copyfile(ROOT / 'roles/installation.py', destination / 'controller.py')
+        shutil.copyfile(ROOT / 'roles/installation.md', destination / 'SKILL.md')
     else:
-        shutil.copyfile(ROOT / 'roles' / (role + '.py'), destination / 'controller.py')
-        shutil.copyfile(ROOT / 'roles' / (role + '.md'), destination / 'SKILL.md')
-        shutil.copyfile(ROOT / 'roles' / (role + '-debug.md'), destination / 'DEBUG.md')
-        # Developer compiles reviews using these same owned sources.
-        shutil.copytree(ROOT / 'roles', destination / 'roles', dirs_exist_ok=True)
-        if binding:
-            write_json(destination / 'review.json', binding)
+        if role != 'feature':
+            raise ValueError('Build delegation or feature.')
+        shutil.copyfile(ROOT / 'roles/feature.py', destination / 'controller.py')
+        shutil.copyfile(ROOT / 'roles/feature.md', destination / 'SKILL.md')
+    for filename in ('DEBUG.md', 'entry.py', 'commit_report.py', 'installation.json'):
+        (destination / filename).unlink(missing_ok=True)
+    if role == 'feature':
+        (destination / 'github_issue.py').unlink(missing_ok=True)
+    for obsolete in (destination / 'roles').glob('*-debug.md'):
+        obsolete.unlink()
     if name:
         path = destination / 'SKILL.md'
         lines = path.read_text().splitlines()
@@ -59,17 +65,3 @@ def bind(agent_id, skill_id):
     present = cli('agent', 'skills', 'list', agent_id)
     if not any(row.get('id', row.get('skill_id')) == skill_id for row in present):
         raise ValueError('The imported skill is not bound to its target agent.')
-
-
-def compile_review(binding, commit=None, submission_id=None):
-    binding = {**binding, 'commit': commit, 'submission_id': submission_id}
-    name = 'multica-featssship-review-' + binding['issue_id']
-    local = Path.cwd() / '.multica' / 'featssship' / name
-    receipt = local.parent / (name + '.json')
-    import json
-    owned = json.loads(receipt.read_text()) if receipt.exists() else {}
-    package = build('reviewer', local, name=name, binding=binding)
-    skill_id = install(package, binding.get('reviewer_skill_id') or owned.get('skill_id'))
-    write_json(receipt, {'skill_id': skill_id})
-    bind(binding['reviewer_id'], skill_id)
-    return name, skill_id

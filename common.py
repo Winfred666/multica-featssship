@@ -1,16 +1,68 @@
 """Native CLI, comment records and Git operations shared by the local skills."""
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
-import tempfile
 
 QUESTIONS = (
-    'Does the delivered behavior satisfy the request and acceptance evidence?',
-    'Are the additions necessary for the requested outcome?',
     'Does the solution preserve the requested demand without shifting scope?',
+    'Are the additions necessary for the requested outcome?',
 )
+# TODO: Runtime-enforced completion belongs to https://github.com/Winfred666/multica-RSI/issues/40.
+ROUND_DONE = 'Delivery/review/work done this round, exit directly and silently'
+REWORK_DONE = 'Rework sent, directly and silently exit'
+WAIT_OUTER = 'Directly and silently exit if outer confirmation has not been received yet.'
+INSTALLATION_KEY = 'featssship.installation'
+PROCESS_KEY = 'featssship.process'
+
+
+def installation_config(issue, key=INSTALLATION_KEY):
+    value = issue.get('metadata', {}).get(key, {})
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def process_config(issue):
+    return installation_config(issue, PROCESS_KEY)
+
+
+def save_config(issue_id, config, key=INSTALLATION_KEY):
+    cli('issue', 'metadata', 'set', issue_id, '--key', key, '--value', json.dumps(config), '--type', 'string')
+
+
+def merge_patch(config, patch):
+    """JSON merge patch: objects merge, arrays replace, null deletes a field."""
+    result = dict(config)
+    for key, value in patch.items():
+        if value is None:
+            result.pop(key, None)
+        elif isinstance(value, dict):
+            result[key] = merge_patch(result.get(key, {}) if isinstance(result.get(key), dict) else {}, value)
+        else:
+            result[key] = value
+    return result
+
+
+def installer_config(main):
+    return installation_config(cli('issue', 'get', main['parent_issue_id']))
+
+
+def feature_config(issue):
+    process = process_config(issue)
+    if not process:
+        raise ValueError('MAIN must supply the issue’s process configuration before development.')
+    main = cli('issue', 'get', issue['parent_issue_id'])
+    installed = installer_config(main)
+    directions = process_config(main)['directions']
+    name = next(name for name, direction in directions.items()
+                if process['branch'].rsplit('/', 1)[0] == direction['branch_prefix'])
+    project = cli('project', 'get', issue['project_id'])
+    section = re.search(r'<!-- featssship:installation -->(.*?)<!-- /featssship:installation -->',
+                        project.get('description', ''), re.S)
+    command = re.search(r'^- ' + re.escape(name) + r':.*\n  Test: `(.*)`$', section[1] if section else '', re.M)
+    if not command or not command[1].strip():
+        raise ValueError('Project description needs verification guidance for direction ' + name)
+    return {**process, 'repository': installed['repository'], 'test_command': command[1],
+            **{role + '_id': installed['installed_' + role + '_id'] for role in ('developer', 'reviewer')}}
 
 
 def run(*words, cwd=None, input=None):
@@ -22,15 +74,6 @@ def run(*words, cwd=None, input=None):
 
 def cli(*words, input=None):
     return json.loads(run('multica', *words, '--output', 'json', input=input))
-
-
-def write_json(path, data):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as stream:
-        json.dump(data, stream, indent=2)
-        temporary = Path(stream.name)
-    temporary.replace(path)
 
 
 def block(kind, data):
@@ -48,65 +91,15 @@ def comment(issue_id, content, parent=None, *, steer_agent=None):
         words += ['--parent', parent]
     if steer_agent:
         for row in cli('issue', 'runs', issue_id, '--active'):
-            if row['agent_id'] == steer_agent and row['status'] == 'running':
+            if (row['agent_id'] == steer_agent and row['status'] == 'running'
+                    and row.get('can_supplement') is True):
                 words += ['--steer', row['id']]
+                break
     return cli(*words, input=content)
 
 
 def mention(agent_id):
     return f'[@agent](mention://agent/{agent_id})'
-
-
-def reply_parent(context, fallback):
-    return getattr(context['args'], 'thread', None) or context['state'].get('reply_parent') or fallback
-
-
-def check_identity(context, binding, role):
-    if context['workspace_id'] != binding['workspace_id'] or context['issue_id'] != binding['issue_id']:
-        raise ValueError('Use this package in its native workspace and issue.')
-    if context['agent_id'] != binding[role + '_id']:
-        raise ValueError('This action belongs to the configured ' + role + ' identity.')
-    if binding['developer_id'] == binding['reviewer_id']:
-        raise ValueError('Developer and Reviewer must be different identities.')
-
-
-def feature(context, role='developer'):
-    issue = cli('issue', 'get', context['issue_id'])
-    binding = unpack(issue['description'], 'binding')
-    if not binding:
-        raise ValueError('This issue has no featssship binding.')
-    check_identity(context, binding, role)
-    if issue.get('status_category') in ('done', 'cancelled'):
-        raise ValueError('The feature issue is closed.')
-    return issue, binding
-
-
-def records(binding):
-    rows = cli('issue', 'comment', 'list', binding['issue_id'], '--thread', binding['thread_id'], '--tail', '30')
-    found = []
-    for row in rows:
-        for kind, role in (('submission', 'developer'), ('review', 'reviewer'), ('integration-rework', 'developer'), ('integration', 'developer'), ('result', 'developer')):
-            data = unpack(row.get('content', ''), kind)
-            if data and row.get('author_type') == 'agent' and row.get('author_id') == binding[role + '_id']:
-                found.append((kind, data, row))
-    return found, rows
-
-
-def latest(rows, kind):
-    return next(((data, row) for key, data, row in reversed(rows) if key == kind), (None, None))
-
-
-def current(binding):
-    rows, comments = records(binding)
-    submission, submit_row = latest(rows, 'submission')
-    review, review_row = latest(rows, 'review')
-    # A verdict belongs to one submission, even if Developer resubmits the same SHA.
-    if review and (not submit_row or review['submission_id'] != submit_row['id']):
-        review, review_row = None, None
-    correction, correction_row = latest(rows, 'integration-rework')
-    if correction and submission and correction.get('submission_id') == submit_row['id']:
-        review, review_row = {**correction, 'verdict': 'rework'}, correction_row
-    return submission, submit_row, review, review_row, rows, comments
 
 
 def repo_root():
@@ -117,9 +110,17 @@ def git(repo, *words):
     return run('git', '-C', str(repo), *words)
 
 
+def feature_branch(direction, name):
+    if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', name):
+        raise ValueError('Give a short kebab-case feature name, such as tree-horizontal-more.')
+    branch = (direction.get('branch_prefix') or 'feat/' + direction['name']) + '/' + name
+    run('git', 'check-ref-format', '--branch', branch)
+    return branch
+
+
 def clean(repo):
     if git(repo, 'status', '--porcelain'):
-        raise ValueError('Commit or preserve the checkout changes before this action.')
+        raise ValueError('Commit or preserve working-tree changes before this action.')
 
 
 def check_repo(repo, binding):
@@ -141,11 +142,11 @@ def exclude_local(repo):
     path.write_text(existing)
 
 
-def test(repo, command, *, required=True):
+def test(repo, command):
     result = subprocess.run(command, shell=True, cwd=repo, text=True, capture_output=True)
     evidence = {'command': command, 'exit_code': result.returncode,
                 'output': (result.stdout + result.stderr)[-4000:]}
-    if result.returncode and required:
+    if result.returncode:
         raise ValueError('Configured check failed: ' + json.dumps(evidence))
     if not result.returncode:
         del evidence['output']
@@ -153,14 +154,9 @@ def test(repo, command, *, required=True):
     return evidence
 
 
-def human_accepts(comments, commit):
-    return any(row.get('author_type') == 'member' and
-               unpack(row.get('content', ''), 'accept') == {'commit': commit} for row in comments)
-
-
 def has_manual(issue):
     return any(label['name'] == 'manual' for label in issue.get('labels', []))
 
 
 def entry_command(name):
-    return f'Run `python3 <installed {name} skill directory>/entry.py` from the target repository root.'
+    return f'Run `python3 <installed {name} skill directory>/wrapper.py` from the target repository root.'

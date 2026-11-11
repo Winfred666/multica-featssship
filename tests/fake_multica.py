@@ -27,7 +27,8 @@ def main():
         result = db['agents'][args[2]]
     elif args[:2] == ['agent', 'create']:
         result = {'id': new(), 'name': option('name'), 'runtime_id': option('runtime-id'),
-                  'workspace_id': db['workspace_id'], 'instructions': option('instructions')}
+                  'workspace_id': db['workspace_id'], 'instructions': option('instructions'),
+                  'model': option('model', ''), 'thinking_level': option('thinking-level', '')}
         db['agents'][result['id']] = result
     elif args[:3] == ['agent', 'skills', 'list']:
         result = [{'id': key, 'name': db['skills'][key]['name']} for key in db['bindings'].get(args[3], [])]
@@ -51,14 +52,41 @@ def main():
     elif args[:2] == ['project', 'update']:
         result = db['projects'][args[2]]
         result['description'] = option('description')
+    elif args[:2] == ['label', 'list']:
+        result = list({label['id']: label for issue in db['issues'].values() for label in issue.get('labels', [])}.values())
+    elif args[:2] == ['label', 'create']:
+        result = {'id': new(), 'name': option('name')}
     elif args[:2] == ['issue', 'get']:
         result = db['issues'][args[2]]
+    elif args[:2] == ['issue', 'children']:
+        result = {'stages': [], 'unstaged': [row for row in db['issues'].values() if row.get('parent_issue_id') == args[2]]}
+    elif args[:3] == ['issue', 'subscriber', 'add']:
+        users = db.setdefault('subscribers', {}).setdefault(args[3], [])
+        if option('user') not in users:
+            users.append(option('user'))
+        result = {'ok': True}
+    elif args[:2] == ['issue', 'metadata']:
+        result = db['issues'][args[3]]
+        metadata = result.setdefault('metadata', {})
+        if args[2] == 'set':
+            metadata[option('key')] = option('value')
+        elif args[2] == 'delete':
+            metadata.pop(option('key'), None)
+        else:
+            raise ValueError('Unsupported metadata action')
+        size = len(json.dumps(metadata).encode())
+        if size > 8192:
+            raise ValueError('Issue metadata exceeds 8 KB')
+        db['peak_metadata_bytes'] = max(db.get('peak_metadata_bytes', 0), size)
     elif args[:2] == ['issue', 'create']:
         result = {'id': new(), 'title': option('title'), 'description': text('description'),
                   'project_id': option('project'), 'workspace_id': db['workspace_id'],
                   'parent_issue_id': option('parent'), 'assignee_id': option('assignee-id'),
-                  'assignee_type': 'agent', 'labels': [], 'status': option('status')}
+                  'assignee_type': 'agent', 'labels': [], 'status': option('status'), 'metadata': {}}
         db['issues'][result['id']] = result
+    elif args[:3] == ['issue', 'label', 'add']:
+        result = db['issues'][args[3]]
+        result['labels'].append({'id': args[4], 'name': 'manual'})
     elif args[:2] == ['issue', 'update']:
         result = db['issues'][args[2]]
         if option('title'):
@@ -71,6 +99,8 @@ def main():
     elif args[:2] == ['issue', 'runs']:
         result = [row for row in db.get('runs', []) if row['issue_id'] == args[2]]
     elif args[:3] == ['issue', 'comment', 'add']:
+        if args[3] == db.get('fail_delivery_issue'):
+            raise ValueError('Fixture delivery failed')
         parent = option('parent')
         if os.environ.get('FEATSSSHIP_TRIGGER') and args[3] == os.environ['MULTICA_ISSUE_ID']:
             if parent != os.environ['FEATSSSHIP_TRIGGER']:
