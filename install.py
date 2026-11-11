@@ -113,7 +113,7 @@ def execute(config, path):
     cli('project', 'update', project['id'], '--description', project_text)
     root_text = section(root.get('description'),
                         'MAIN drafts and delegates features. '
-                        'Developer owns implementation and approved integration; the distinct Reviewer owns acceptance.\n\n' + directions + '\n\n' + entry_command(name))
+                        'Developer owns implementation and approved integration; the distinct Reviewer owns acceptance.\n\n' + directions + '\n\nRun `' + shlex.join(['python3', str(repo / '.agents/skills' / name / 'wrapper.py')]) + '` from the target repository root.')
     title = 'MAIN DEV: ' + re.sub(r'^(?:MAIN DEV:\s*)+', '', root['title'])
     cli('issue', 'update', root['id'], '--title', title, '--description-stdin', '--no-start', input=root_text)
     destination = repo / '.agents' / 'skills'
