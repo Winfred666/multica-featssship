@@ -18,8 +18,11 @@ Give a short `name` such as `tree-horizontal-more`; the installed direction pref
 formats the branch, for example `feat/frontend/tree-horizontal-more`. `title` is optional. `manual` is a boolean, default false; only manual features publish a remote feature branch and wait for superior approval.
 
 An optional GitHub URL is a source link for mirroring. Scope and
-acceptance come from the delegation config. Never create GitHub issues
-routinely. MAIN receives the final result and ends the turn when instructed.
+acceptance come from the delegation config. Reuse a supplied GitHub issue.
+Proactively create one only for a valuable or impressive feature after the user
+explicitly approves its creation during delegation; set `github_issue` in the
+delegation config to its URL. Never create feature issues for trivial fixtures or
+very minor features. MAIN receives the final result and ends the turn when instructed.
 Use `--help` to replay the saved decision, or read this body for a new/completed issue flow.
 Installation: README.md.
 
