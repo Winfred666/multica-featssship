@@ -18,7 +18,8 @@ Requires Python 3.11+, Git and authenticated `multica`.
 
 ### Installer agent
 
-Reuse an available featssship checkout. From the assigned installation issue, run:
+Reuse an available featssship checkout. In the assigned installation issue,
+run from the **target repository checkout**:
 
 ```bash
 python3 /path/to/multica-featssship/install.py
