@@ -9,6 +9,9 @@ REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared f
                  'Only read and review; do not edit source, run tests, merge or push. Cancel may invoke scripted local cleanup. '
                  'Answer the acceptance and review questions in --finding. Approve or return corrections.')
 
+# TODO: later would have share folder.
+REVIEWER_ID = '6076f4d4-e65c-40c0-91f8-fdea02ff84c0'
+
 # TODO: break agent-as-middle-layer: the runtime should stop until superior input directly.
 MANUAL_WAIT = 'Auto review pass, directly and silently exit until superior instruction, if outer confirmation has not been received yet.'
 
@@ -62,10 +65,9 @@ def submit(args, context):
     if binding.get('manual', has_manual(context['issue'])):
         git(repo, 'push', '--force-with-lease=' + ref + ':' + context['state'].get('commit', context['issue']['metadata'].get('git_base_commit', '')), 'origin', 'HEAD:' + ref)
     context['state'].update(commit=git(repo, 'rev-parse', 'HEAD'), summary=args.summary)
-    comment(context['issue_id'], mention(binding['reviewer_id']) +
-            ' TODO: Review [result](mention://issue/' + context['issue_id'] + ') at ' + context['state']['commit'] +
-            ': ' + args.summary + '\n\n' + entry_command('multica-featssship-develop-review'),
-            getattr(args, 'thread', None), steer_agent=binding['reviewer_id'])
+    comment(context['issue_id'], mention(REVIEWER_ID, 'reviewer') +
+            ' ' + args.summary + '\n\n' + entry_command('multica-featssship-develop-review'),
+            getattr(args, 'thread', None), steer_agent=REVIEWER_ID)
     context['handoff'] = ROUND_DONE
 
 
@@ -108,9 +110,8 @@ def verdict(args, context):
             return {'phase': 'manual_approve'}
     if context['phase'] == 'manual_approve':
         return {'phase': 'develop'}
-    comment(context['issue_id'], mention(binding['developer_id']) + ' TODO: ' +
-            ('Merge approved ' if approved else 'Correct ') +
-            '[result](mention://issue/' + context['issue_id'] + ') at ' + commit + '.\n' +
+    comment(context['issue_id'], mention(binding['developer_id']) +
+            (' Merge approved work.\n' if approved else '\n') +
             args.finding + '\n\n' + entry_command('multica-featssship-develop-review'),
             getattr(args, 'thread', None), steer_agent=binding['developer_id'])
     context['handoff'] = ROUND_DONE if approved else REWORK_DONE
@@ -168,7 +169,7 @@ def finish(context):
         raise ValueError('Finish from this issue’s prepared feature worktree.')
     cancelled = state.get('cancel_reason')
     note = ('Cancelled: ' + cancelled if cancelled else
-            'Merged ' + state['integrated'] + ': ' + state['summary'] + '\nReview: ' + state['finding'])
+            'Merged work: ' + state['summary'] + '\nReview: ' + state['finding'])
     os.chdir(common)
     run('git', '--git-dir', str(common), 'worktree', 'remove', str(repo))
     run('git', '--git-dir', str(common), 'branch', '-D', binding['branch'])
@@ -183,7 +184,7 @@ def finish(context):
     parent = context['binding']['main_issue_id']
     main = cli('issue', 'get', parent)
     comment(parent, mention(main['assignee_id']) +
-            ' TODO: Review the [Feature](mention://issue/' + context['issue_id'] + ') result.\n\n' + note,
+            ' Review the [Feature](mention://issue/' + context['issue_id'] + ') result.\n\n' + note,
             steer_agent=main['assignee_id'])
     cli('issue', 'status', context['issue_id'], 'cancelled' if cancelled else 'in_review')
     context['handoff'] = ROUND_DONE

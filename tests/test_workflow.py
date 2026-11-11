@@ -63,7 +63,7 @@ class WorkflowFixture(unittest.TestCase):
         self.ids = {name: str(uuid.uuid4()) for name in ('workspace', 'project', 'main', 'runtime', 'installer')}
         self.db_path = self.base / 'native.json'
         db = {'workspace_id': self.ids['workspace'], 'calls': [], 'agents': {
-            self.ids['main']: {'id': self.ids['main'], 'runtime_id': self.ids['runtime'], 'workspace_id': self.ids['workspace'],
+            self.ids['main']: {'id': self.ids['main'], 'name': 'Delegator', 'runtime_id': self.ids['runtime'], 'workspace_id': self.ids['workspace'],
                                'model': 'fixture', 'thinking_level': 'high'}},
             'skills': {}, 'bindings': {}, 'projects': {self.ids['project']: {'id': self.ids['project'],
             'workspace_id': self.ids['workspace'], 'description': 'Existing project context.'}},
@@ -201,7 +201,7 @@ class WorkflowFixture(unittest.TestCase):
         result = self.invoke(self.developer, 'submit', '--summary', 'Updated message.txt: ' + text, plain=True)
         self.assertEqual(result.stdout, 'Delivery/review/work done this round, exit directly and silently\n')
         self.assertEqual(result.stderr, '')
-        self.assert_delivery(before, self.config['reviewer_id'], self.feature_id)
+        self.assert_delivery(before, '6076f4d4-e65c-40c0-91f8-fdea02ff84c0', self.feature_id)
         return commit
 
     def review(self, verdict):
@@ -237,8 +237,17 @@ class WorkflowFixture(unittest.TestCase):
         body = rows[0]['content']
         self.assertIn('mention://agent/' + recipient, body)
         self.assertEqual(body.count('mention://agent/'), 1)
-        self.assertEqual(body.count('TODO:'), 1)
-        self.assertIn('mention://issue/' + self.feature_id, body)
+        self.assertNotIn('TODO', body)
+        self.assertNotIn(' Review:', body)
+        self.assertNotIn(' Correct:', body)
+        self.assertNotRegex(body, r'\b[0-9a-f]{40}\b')
+        if issue == self.feature_id:
+            self.assertNotIn('mention://issue/', body)
+        else:
+            self.assertIn('mention://issue/' + self.feature_id, body)
+        name = ('reviewer' if recipient == '6076f4d4-e65c-40c0-91f8-fdea02ff84c0'
+                else self.db()['agents'][recipient]['name'])
+        self.assertIn('[@' + name + ']', body)
 
     def parent_notes(self):
         return [r['content'] for r in self.db()['comments']

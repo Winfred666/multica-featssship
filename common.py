@@ -94,8 +94,9 @@ def comment(issue_id, content, parent=None, *, steer_agent=None):
     return cli(*words, input=content)
 
 
-def mention(agent_id):
-    return f'[@agent](mention://agent/{agent_id})'
+def mention(agent_id, name=None):
+    name = name or cli('agent', 'get', agent_id)['name']
+    return f'[@{name}](mention://agent/{agent_id})'
 
 
 def repo_root():
