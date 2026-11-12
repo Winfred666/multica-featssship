@@ -438,8 +438,9 @@ def agent_decision(output):
 # completion; delegation cleans SOP state at the ringed-circle for re-entry.
 # Blocked runs do not reach that node. No end-loop mode is defined yet.
 def finished_instruction(controller):
-    return (controller.SOP_NAME + ' SoP finished, directly and silently end this turn. '
-            'Allow re-enter with initial command in SKILL.md next round.')
+    return getattr(controller, 'FINISHED_INSTRUCTION',
+                   getattr(controller, 'SOP_DISPLAY_NAME', controller.SOP_NAME) + ' SoP finished, directly and silently end this turn. '
+                   'Allow re-enter with initial command in SKILL.md next round.')
 
 
 def response(result):

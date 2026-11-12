@@ -7,6 +7,9 @@ In MAIN DEV:, run `python3 <this-skill-directory>/wrapper.py` from the target
 repository with `--thread <request UUID>` and optional `--config '{"issues":[{}]}'`
 (one item by default).
 
+Each item accepts `manual: true` or `manual: false` to override the installation
+default; explicit `false` selects automatic review approval.
+
 Edit the shown JSON file offline; `refresh --config-file PATH` uploads the whole
 batch and invalidates approval. Run `dispatch` only after the original human
 confirms or accepts the latest draft; judge intent, not exact wording. Do not call

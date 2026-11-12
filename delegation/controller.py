@@ -8,6 +8,10 @@ from common import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, co
 from github_issue import issue_link, mirror_title
 from sop import FINISHED, Option, Parameter, State, Workflow
 
+SOP_DISPLAY_NAME = 'multica-featssship-delegation'
+FINISHED_INSTRUCTION = (SOP_DISPLAY_NAME + ' SoP finished, directly and silently end this turn Unless CEO ask for further step. '
+                        'Allow re-enter with initial command in SKILL.md next round.')
+
 FIELDS = {**dict.fromkeys(('name', 'request', 'direction', 'title', 'scope', 'question', 'github_issue', 'branch', 'parent_branch'), str),
           'manual': bool, 'sandbox': dict, 'questions': list}
 WAIT_OUTER = 'do not call SoP and end this turn if no outer confirmation or edition instruction.'
