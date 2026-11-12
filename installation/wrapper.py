@@ -367,6 +367,8 @@ def transition(args, context, controller):
     owner = state_owner(workflow, next_phase, context)
     if result['accepted'] and workflow.handoff and owner and owner['id'] != context['agent_id'] and not context.get('handoff'):
         workflow.handoff(args, context, owner)
+    if result['accepted'] and owner and (before is None or owner != state_owner(workflow, phase, context)):
+        multica('assign', context['issue_id'], '--to-id', owner['id'], '--no-start')
     finished = workflow.states[next_phase].final
     changed = before != (None if finished else status)
     result.update(ok=invalid is None, status=status, finished=finished,
