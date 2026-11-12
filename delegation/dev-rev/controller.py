@@ -2,11 +2,13 @@
 from pathlib import Path
 import os
 import json
+import re
 
 from common import DISPATCH_KEY, ROUND_DONE, REWORK_DONE, check_repo, clean, cli, comment, entry_command, feature_config, git, run, test
 from sop import Branch, Completed, Option, Parameter, State, Workflow
 
 CACHE_VIEW = False
+FINAL_DONE = 'directly and silently end this turn'
 
 REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared folder and branch. '
                  'Review without source edits or tests; after approval, own scripted integration, push and completion. '
@@ -22,7 +24,7 @@ def owner(role):
 
 def handoff(args, context, owner):
     comment(context['issue_id'], f'[@{owner["name"]}](mention://agent/{owner["id"]}) ' +
-            (args.summary if args.event == 'submit' else args.finding if args.event == 'rework' else context['result']['next_step']['instruction']) + '\n\n' + entry_command('multica-featssship-develop-review'),
+            (args.summary + '\n\n' + context['state']['diff'] if args.event == 'submit' else args.finding if args.event == 'rework' else context['result']['next_step']['instruction']) + '\n\n' + entry_command('multica-featssship-develop-review'),
             args.thread, steer_agent=owner['id'])
     context['handoff'] = REWORK_DONE if context['phase'] == 'develop' else ROUND_DONE
 
@@ -37,8 +39,8 @@ def observed(context):
     issue = cli('issue', 'get', context['issue_id'])
     context.update(issue=issue, binding=feature_config(issue))
     if issue['status'] in ('done', 'in_review', 'cancelled'):
-        context['handoff'] = ROUND_DONE
-        raise Completed(ROUND_DONE)
+        context['handoff'] = FINAL_DONE
+        raise Completed(FINAL_DONE)
 
 
 def shared_repo(context):
@@ -64,7 +66,37 @@ def submit(args, context):
     ref = 'refs/heads/' + binding['branch']
     if binding['manual']:
         git(repo, 'push', '--force-with-lease=' + ref + ':' + context['state'].get('commit', context['issue']['metadata'].get('git_base_commit', '')), 'origin', 'HEAD:' + ref)
-    context['state'].update(commit=git(repo, 'rev-parse', 'HEAD'), summary=args.summary)
+    feature, title = git(repo, 'log', '--no-merges', '--format=%H%x00%s',
+                         'origin/' + binding['parent_branch'] + '..HEAD').split('\x00', 1)
+    remote = binding['repository'].removesuffix('.git').replace('git@github.com:', 'https://github.com/').rstrip('/')
+    context['state'].update(commit=git(repo, 'rev-parse', 'HEAD'), summary=args.summary,
+                            feature=f'[{title}]({remote}/commit/{feature})', diff=diff_report(repo, binding))
+
+
+def diff_report(repo, binding):
+    rows = [line.split('\t', 2) for line in git(repo, 'diff', '--numstat',
+            'origin/' + binding['parent_branch'] + '...HEAD').splitlines()]
+    sizes = [(int(added) if added != '-' else 0, int(deleted) if deleted != '-' else 0, path)
+             for added, deleted, path in rows]
+    totals = f'+{sum(a for a, _, _ in sizes)} / -{sum(d for _, d, _ in sizes)} lines across {len(rows)} files'
+    table = ['| File | Added / deleted |', '| --- | --- |']
+    table += [f'| `{path}` | +{added} / -{deleted} |'
+              for added, deleted, path in sorted(sizes, key=lambda row: row[0] + row[1], reverse=True)[:3]]
+    return totals + ('\n\n' + '\n'.join(table) if rows else '')
+
+
+def final_note(context):
+    state, binding = context['state'], context['binding']
+    if state.get('cancel_reason'):
+        return '/note sub-issue CANCELLED: ' + state['cancel_reason']
+    note = '/note sub-issue DONE: ' + state['feature'] + '.'
+    mirror = re.fullmatch(r'\[.+\]\((https://github\.com/[^)]+/issues/[0-9]+)\)', context['issue']['title'])
+    source = binding.get('github_issue') or (mirror[1] if mirror else None)
+    if source:
+        issue = json.loads(run('gh', 'issue', 'view', source, '--json', 'state,title,url'))
+        if issue['state'] == 'CLOSED':
+            note += f" GitHub issue [{issue['title']}]({issue['url']}) solved and closed."
+    return note + '\n\n' + state['diff']
 
 
 def outer_confirmed(args, context):
@@ -114,7 +146,6 @@ def merge_approved(args, context):
     ```"""
     if context['phase'] == 'manual_approve':
         outer_confirmed(args, context)
-        context['state']['finding'] += '\nOuter approval: ' + args.finding
     repo, binding, state = shared_repo(context), context['binding'], context['state']
     commit = state['commit']
     if git(repo, 'rev-parse', 'HEAD') != commit:
@@ -152,12 +183,10 @@ def finish(context):
     if repo.resolve() != (common / 'featsship' / context['issue_id']).resolve():
         raise ValueError('Finish from this issue’s prepared feature worktree.')
     cancelled = state.get('cancel_reason')
-    note = ('Cancelled: ' + cancelled if cancelled else
-            'Merged work: ' + state['summary'] + '\nReview: ' + state['finding'])
+    note = final_note(context)
     os.chdir(common)
     run('git', '--git-dir', str(common), 'worktree', 'remove', str(repo))
     run('git', '--git-dir', str(common), 'branch', '-D', binding['branch'])
-    note += '\nRemoved the local feature worktree and branch.'
     if not cancelled:
         try:
             run('git', '--git-dir', str(common), 'push', 'origin', state['integrated'] + ':refs/heads/' + binding['parent_branch'])
@@ -167,8 +196,7 @@ def finish(context):
             return {'phase': 'develop', 'instruction': 'Parent push failed; restored the local branch/worktree for rework. Merge the latest parent, commit the resolution and submit again. ' + str(error)}
     parent = context['binding']['main_issue_id']
     main = cli('issue', 'get', parent)
-    comment(parent, '[@all](mention://all/all) Note: [Feature](mention://issue/' + context['issue_id'] + ') result.\n\n' + note,
-            binding['dispatch_thread'])
+    comment(parent, note, binding['dispatch_thread'])
     cli('issue', 'metadata', 'delete', context['issue_id'], '--key', 'git_base_commit')
     progress = json.loads(main.get('metadata', {}).get(DISPATCH_KEY, '{}'))
     if progress.get('issue_id') == context['issue_id']:
@@ -177,8 +205,8 @@ def finish(context):
         cli('issue', 'metadata', 'set', parent, '--key', DISPATCH_KEY,
             '--value', json.dumps(progress), '--type', 'string')
     cli('issue', 'status', context['issue_id'], 'cancelled' if cancelled else 'in_review')
-    context['handoff'] = ROUND_DONE
-    return {'phase': 'finished', 'instruction': note + '\nReported to MAIN; end this turn.'}
+    context['handoff'] = FINAL_DONE
+    return {'phase': 'finished', 'instruction': FINAL_DONE}
 
 
 workflow = Workflow(
@@ -197,17 +225,16 @@ workflow = Workflow(
               Option('cancel', 'finished', 'Cancel for wrong scope, incomplete Git/version infrastructure or refactoring beyond the edit budget; script cleans locally without merging or pushing.', verdict,
                      params=(Parameter('--reason', 'Concrete cancellation blocker'),)))),
     Branch('approval', 'manual config?', {'manual': 'manual_approve', 'automatic': 'approve'}),
-    State('approve', 'Reviewer: automated review passed. Approve now to merge into local main, then clean up and push automatically.',
-          precheck=observed, owner=owner('reviewer'), options=(Option('approve', 'merge_result', 'Merge approved work; conflict returns to development, success finishes automatically.', merge_approved),)),
+    State('approve', 'Reviewer: automated review passed. Use final_approve now to merge into local main, then clean up and push automatically.',
+          precheck=observed, owner=owner('reviewer'), options=(Option('final_approve', 'merge_result', 'Merge approved work; conflict returns to development, success finishes automatically.', merge_approved),)),
     State('manual_approve', MANUAL_WAIT, precheck=observed, owner=owner('reviewer'), options=(
         Option('rework', 'develop', 'Reviewer: return corrections to Developer without integration.', verdict,
                params=(Parameter('--finding', 'Review corrections or superior-requested rework'),)),
-        Option('approve', 'merge_result', 'ONLY outer allowed: merge approved work, then clean up and push automatically.', merge_approved,
-               params=(Parameter('--finding', 'Superior approval evidence'),)),
+        Option('final_approve', 'merge_result', 'ONLY outer allowed: merge approved work, then clean up and push automatically.', merge_approved),
         Option('cancel', 'finished', 'ONLY outer allowed: cancel the feature and clean up without integration.', verdict,
                params=(Parameter('--reason', 'Superior cancellation reason'),)),
     )),
     Branch('merge_result', 'Merge conflict / rework?', {'rework': 'develop', 'merged': 'finished'}),
-    State('finished', 'Local cleanup and any approved push completed; reported to MAIN. End this turn.', final=True, owner=owner('reviewer')),
+    State('finished', FINAL_DONE, final=True, owner=owner('reviewer')),
     params=(Parameter('--thread', 'Native triggering comment UUID', required=False),), handoff=handoff,
 )
