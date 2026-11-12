@@ -152,9 +152,10 @@ def dispatch(args, context):
         save_progress(context)
     cli('issue', 'metadata', 'set', child['id'], '--key', 'git_base_commit',
         '--value', record['branch_base'], '--type', 'string')
+    labels = cli('label', 'list')
+    labels = labels.get('labels', []) if isinstance(labels, dict) else labels
+    cli('issue', 'label', 'add', child['id'], next(label['id'] for label in labels if label['name'] == 'dev'))
     if request['manual'] and not has_manual(child):
-        labels = cli('label', 'list')
-        labels = labels.get('labels', []) if isinstance(labels, dict) else labels
         label = next((label for label in labels if label['name'] == 'manual'), None)
         label = label or cli('label', 'create', '--name', 'manual', '--color', '#64748b')
         cli('issue', 'label', 'add', child['id'], label['id'])
