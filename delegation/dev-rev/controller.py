@@ -13,7 +13,7 @@ REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared f
                  'Answer the acceptance and review questions in --finding. Approve or return corrections.')
 
 # TODO: break agent-as-middle-layer: the runtime should stop until superior input directly.
-MANUAL_WAIT = 'Auto review pass, directly and silently exit until superior instruction, if outer confirmation has not been received yet.'
+MANUAL_WAIT = 'Auto review passed; wait for superior instruction. Directly and silently end this turn.'
 
 
 def owner(role):

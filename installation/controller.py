@@ -93,7 +93,7 @@ def confirmed(args, context):
     result = execute(config, context['issue'], state, context['save_state'])
     cli('issue', 'status', context['issue_id'], 'done')
     return {'instruction': 'Installation finished. Continue on MAIN ' + result['root_issue_id'] +
-            ' using ' + result['command'] + '. Exit this round.'}
+            ' using ' + result['command'] + '. Directly and silently end this turn.'}
 
 
 workflow = Workflow(
