@@ -88,10 +88,8 @@ def request_config(batch, installed=None, *, index):
     result = {key: installed[key] for key in ('repository', 'sandbox') if key in installed}
     result.update(parent_branch=installed.get('parent_branch', 'main'), manual=installed.get('manual', False),
                   **{role + '_id': installed.get('installed_' + role + '_id') for role in ('delegator', 'developer', 'reviewer')},
-                  direction=name, scope=selected.get('scope', ''),
-                  question=next(iter(selected.get('questions', [])), ''))
+                  direction=name, scope=selected.get('scope', ''), questions=selected.get('questions', []))
     result.update(config)
-    result['questions'] = config.get('questions', [result['question'], *[q for q in selected.get('questions', []) if q != result['question']]])
     if selected and result.get('name'):
         result.setdefault('branch', feature_branch(selected, result['name']))
     return result

@@ -131,9 +131,9 @@ not enforced turn completion or a measured token saving; enforcement belongs to
 the runner ([multica-RSI#40](https://github.com/Winfred666/multica-RSI/issues/40)).
 Wrong-role action calls exit nonzero on stderr without JSON or writes.
 
-Select `review` to inspect the issue's criteria and selected process questions.
-The selected direction supplies universal review questions; the delegation adds
-only its request-specific acceptance/question overrides. Reviewer returns one `--finding` with `approve` or `rework`.
+Select `review` to inspect the request, scope and selected questions.
+The installation direction's `questions` apply by default; a delegation `questions`
+list replaces them. Reviewer returns one `--finding` with `approve` or `rework`.
 Question order is presentation order, not per-question stepping or parallel tasks.
 
 The HTML graph comes from `Workflow`; action docstrings explain local logic.

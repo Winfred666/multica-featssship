@@ -12,7 +12,7 @@ SOP_DISPLAY_NAME = 'multica-featssship-delegation'
 FINISHED_INSTRUCTION = (SOP_DISPLAY_NAME + ' SoP finished, directly and silently end this turn Unless CEO ask for further step. '
                         'Allow re-enter with initial command in SKILL.md next round.')
 
-FIELDS = {**dict.fromkeys(('name', 'request', 'direction', 'title', 'scope', 'question', 'github_issue', 'branch', 'parent_branch'), str),
+FIELDS = {**dict.fromkeys(('name', 'request', 'direction', 'title', 'scope', 'github_issue', 'branch', 'parent_branch'), str),
           'manual': bool, 'sandbox': dict, 'questions': list}
 WAIT_OUTER = 'do not call SoP and end this turn if no outer confirmation or edition instruction.'
 PROMPT = ('Read current sub-issues list delegation config <file path>, edit JSON offline and upload '
@@ -103,7 +103,7 @@ def dispatch(args, context):
         save_progress(context)
     batch = [request_config(config, context['installed'], index=i) for i in range(len(config['issues']))]
     for index, request in enumerate(batch):
-        missing = [key for key in ('name', 'request', 'direction', 'scope', 'question') if not (request.get(key) or '').strip()]
+        missing = [key for key in ('name', 'request', 'direction', 'scope') if not (request.get(key) or '').strip()]
         if missing or request['direction'] not in {d['name'] for d in context['installed']['directions']}:
             raise ValueError('issues[' + str(index) + '] needs an installed direction and: ' + ', '.join(missing))
     progress = record.setdefault('items', [{} for _ in batch])
@@ -177,7 +177,7 @@ def dispatch_item(context, request, record, index):
         label = label or cli('label', 'create', '--name', 'manual', '--color', '#64748b')
         cli('issue', 'label', 'add', child['id'], label['id'])
     link_config(child['id'], {**context['reference'], 'index': index}, DELEGATION_KEY)
-    description = (request['request'] + '\n\nScope: ' + request['scope'] + '\n\nAcceptance: ' + request['question'] +
+    description = (request['request'] + '\n\nScope: ' + request['scope'] +
                    '\n\nUse the prepared feature worktree: ' + str(worktree) + '\n\nFollow the verification guidance in the project description.\n\n' +
                    entry_command('multica-featssship-develop-review') + '\n\nMAIN selected branch: ' + branch +
                    '. Developer and Reviewer use this existing branch in the shared issue folder from the start; '

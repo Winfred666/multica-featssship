@@ -4,7 +4,7 @@ description: Developer implements and tests; Reviewer owns review, approved inte
 ---
 
 Use the prepared feature worktree named in the issue and MAIN's configured branch. Read its
-request, scope and acceptance question, plus verification guidance in the project description. Run `python3 <this-skill-directory>/wrapper.py`.
+request, scope and shared delegation questions, plus verification guidance in the project description. Run `python3 <this-skill-directory>/wrapper.py`.
 Pass `--thread <trigger UUID>` on comment-triggered calls.
 Start directly in `develop` on the issue's existing branch selected by MAIN.
 Neither role names, creates, renames or switches branches, or makes another checkout.
@@ -14,7 +14,7 @@ in place. A claimed short name is an error, never permission to overwrite anothe
 Developer owns `develop` and `amending`; Reviewer owns review, approval and retained
 `done`. In develop, implement one feature commit, amend corrections, test and submit.
 In `review`, read the exact submitted diff without source edits or tests. Answer
-acceptance and process questions together in one `--finding`; approve or rework.
+the selected review questions in one `--finding`; approve or rework.
 Reviewer can return corrections from review or manual_approve; only Developer implements.
 Automatic approval continues to `approve` with the same Reviewer. With
 `manual: true`, wait in `manual_approve` for a human or MAIN to instruct

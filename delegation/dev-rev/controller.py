@@ -12,7 +12,7 @@ FINAL_DONE = 'directly and silently end this turn'
 
 REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared folder and branch. '
                  'Review without source edits or tests; after approval, own scripted integration, push and completion. '
-                 'Answer the acceptance and review questions in --finding. Approve or return corrections.')
+                 'Answer the selected review questions in --finding. Approve or return corrections.')
 
 # TODO: break agent-as-middle-layer: the runtime should stop until superior input directly.
 MANUAL_WAIT = 'Auto review passed; wait for superior instruction. Directly and silently end this turn.'
@@ -283,7 +283,7 @@ workflow = Workflow(
     State('review', REVIEW_PROMPT + '\n\nAnswer this issue’s selected questions from the shared delegation document.',
           precheck=observed, owner=owner('reviewer'), view=review_view, options=(
               Option('approve', 'approval', 'Approve the revision; manual config waits for outer approval.', verdict,
-                     params=(Parameter('--finding', 'Acceptance answer and review evidence'),)),
+                     params=(Parameter('--finding', 'Review answers and evidence'),)),
               Option('rework', 'develop', 'Send corrections to Developer.', verdict,
                      params=(Parameter('--finding', 'Concrete corrections'),)),
               Option('cancel', Workflow.FINISHED, 'Cancel for wrong scope, incomplete Git/version infrastructure or refactoring beyond the edit budget; script cleans locally without merging or pushing.', verdict,
