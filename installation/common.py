@@ -32,12 +32,16 @@ def attachment(reference):
     return max(rows, key=lambda row: (row.get('created_at', ''), row['id']))
 
 
-def read_config(reference):
+def download_config(reference, directory):
     # TODO: Replace download/read with native deliverable preview when supported.
     row = attachment(reference)
+    downloaded = json.loads(run('multica', 'attachment', 'download', row['id'], '--output-dir', str(directory)))
+    return Path(downloaded['path'])
+
+
+def read_config(reference):
     with tempfile.TemporaryDirectory(prefix='.featssship-', dir=Path.cwd()) as directory:
-        downloaded = json.loads(run('multica', 'attachment', 'download', row['id'], '--output-dir', directory))
-        return json.loads(Path(downloaded['path']).read_text())
+        return json.loads(download_config(reference, directory).read_text())
 
 
 def write_config(reference, config, parent=None, message=' '):
@@ -49,7 +53,7 @@ def write_config(reference, config, parent=None, message=' '):
     with tempfile.TemporaryDirectory(prefix='.featssship-', dir=Path.cwd()) as directory:
         path = Path(directory) / reference['filename']
         path.write_text(json.dumps(config, indent=2) + '\n')
-        # Grilling supplies "Edit or confirm."; other revisions render empty.
+        # Grilling supplies a confirmation prompt; other revisions render empty.
         words = ['issue', 'comment', 'add', reference['issue_id'], '--content', message, '--attachment', str(path)]
         if parent:
             words += ['--parent', parent]
@@ -69,8 +73,10 @@ def merge_patch(config, patch):
     return result
 
 
-def request_config(config, installed=None):
-    """Resolve universal settings live; the delegation stores only request overrides."""
+def request_config(batch, installed=None, *, index):
+    """Resolve one batch item against live universal settings."""
+    config = {key: value for key, value in batch.items() if key != 'issues'}
+    config.update(batch['issues'][index])
     installed = installed if installed is not None else read_config(config['source'])
     directions = installed['directions']
     name = config.get('direction', directions[0]['name'] if len(directions) == 1 else None)
@@ -87,17 +93,22 @@ def request_config(config, installed=None):
     return result
 
 
-def delegation_config(installed, request, source, main_id):
-    defaults = request_config({'source': source, 'direction': request.get('direction', installed['directions'][0]['name'] if len(installed['directions']) == 1 else None)}, installed)
-    return {'source': source, 'main_issue_id': main_id,
-            **{key: value for key, value in request.items() if key == 'direction' or value != defaults.get(key)}}
+def delegation_config(installed, batch, source, main_issue_id, dispatch_thread):
+    document = {'source': source, 'main_issue_id': main_issue_id,
+                'dispatch_thread': dispatch_thread, 'issues': [dict(item) for item in batch['issues']]}
+    for index, item in enumerate(document['issues']):
+        resolved = request_config(document, installed, index=index)
+        for key in ('direction', 'branch'):
+            if resolved.get(key):
+                item[key] = resolved[key]
+    return document
 
 
 def feature_config(issue):
     reference = config_ref(issue, DELEGATION_KEY)
     if not reference:
         raise ValueError('MAIN must link the delegation configuration before development.')
-    config = request_config(read_config(reference))
+    config = request_config(read_config(reference), index=reference['index'])
     name = config['direction']
     project = cli('project', 'get', issue['project_id'])
     section = re.search(r'<!-- featssship:installation -->(.*?)<!-- /featssship:installation -->',

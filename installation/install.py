@@ -159,7 +159,7 @@ def execute(config, issue, state, save_state):
             obsolete.unlink()
     command = shlex.join(['python3', str(destination / name / 'wrapper.py')])
     return {'root_issue_id': root['id'], 'developer_id': developer, 'reviewer_id': reviewer,
-            'command': command, 'inputs': '--thread REQUEST_UUID --config <request-config-JSON>'}
+            'command': command, 'inputs': '--thread REQUEST_UUID --config <batch-issues-JSON>'}
 
 
 if __name__ == '__main__':
