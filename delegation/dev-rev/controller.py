@@ -38,9 +38,16 @@ def review_view(context):
 def observed(context):
     issue = cli('issue', 'get', context['issue_id'])
     context.update(issue=issue, binding=feature_config(issue))
-    if issue['status'] in ('done', 'in_review', 'cancelled'):
+    if issue['status'] in ('done', 'cancelled'):
         context['handoff'] = FINAL_DONE
         raise Completed(FINAL_DONE)
+
+
+def enter_develop(context):
+    """Initial entry runs after the runtime's state-owner check."""
+    if not context['state'].get('status'):
+        cli('issue', 'status', context['issue_id'], 'in_progress')
+    return {}
 
 
 def shared_repo(context):
@@ -71,6 +78,7 @@ def submit(args, context):
     remote = binding['repository'].removesuffix('.git').replace('git@github.com:', 'https://github.com/').rstrip('/')
     context['state'].update(commit=git(repo, 'rev-parse', 'HEAD'), summary=args.summary,
                             feature=f'[{title}]({remote}/commit/{feature})', diff=diff_report(repo, binding))
+    cli('issue', 'status', context['issue_id'], 'in_review')
 
 
 def diff_report(repo, binding):
@@ -131,6 +139,8 @@ def verdict(args, context):
             state['manual_comment_id'] = row['id']
             context['handoff'] = MANUAL_WAIT
             return {'phase': 'manual_approve'}
+    if args.event == 'rework':
+        cli('issue', 'status', context['issue_id'], 'in_progress')
     return {'phase': 'approve' if args.event == 'approve' else 'develop'}
 
 
@@ -172,6 +182,7 @@ def merge_approved(args, context):
             git(repo, 'update-ref', ref, integrated, old)
         state['integrated'] = integrated
     except ValueError as error:
+        cli('issue', 'status', context['issue_id'], 'in_progress')
         return {'phase': 'develop', 'instruction': 'Integration rework: resolve any merge conflict in this worktree, merge the latest parent, commit the resolution as a merge commit and submit for review again. ' + str(error)}
     return finish(context)
 
@@ -193,6 +204,7 @@ def finish(context):
         except ValueError as error:
             run('git', '--git-dir', str(common), 'branch', binding['branch'], state['integrated'])
             run('git', '--git-dir', str(common), 'worktree', 'add', str(repo), binding['branch'])
+            cli('issue', 'status', context['issue_id'], 'in_progress')
             return {'phase': 'develop', 'instruction': 'Parent push failed; restored the local branch/worktree for rework. Merge the latest parent, commit the resolution and submit again. ' + str(error)}
     parent = context['binding']['main_issue_id']
     main = cli('issue', 'get', parent)
@@ -204,14 +216,14 @@ def finish(context):
             progress.pop(key, None)
         cli('issue', 'metadata', 'set', parent, '--key', DISPATCH_KEY,
             '--value', json.dumps(progress), '--type', 'string')
-    cli('issue', 'status', context['issue_id'], 'cancelled' if cancelled else 'in_review')
+    cli('issue', 'status', context['issue_id'], 'cancelled' if cancelled else 'done')
     context['handoff'] = FINAL_DONE
     return {'phase': 'finished', 'instruction': FINAL_DONE}
 
 
 workflow = Workflow(
     State('develop', 'Developer: implement the issue request on MAIN’s feature branch in the current issue folder. '
-          'Keep one non-merge feature commit; amend corrections. Conflict-resolution merge commits are allowed. Test and submit.', initial=True, precheck=observed, owner=owner('developer'),
+          'Keep one non-merge feature commit; amend corrections. Conflict-resolution merge commits are allowed. Test and submit.', initial=True, precheck=observed, view=enter_develop, owner=owner('developer'),
           options=(Option('submit', 'review', 'Test and request independent review; push only if manual.', submit,
                           params=(Parameter('--summary', 'Delivered behavior and evidence'),)),
                    Option('cancel', 'finished', 'Cancel for wrong feature scope, incomplete Git/version infrastructure, or refactoring beyond the allowed edit budget; preserve or commit edits first.', verdict,
