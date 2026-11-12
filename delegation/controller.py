@@ -1,22 +1,18 @@
-"""MAIN derives one shared delegation document and checkpoints its dispatch."""
+"""MAIN dispatches one human-approved JSON batch and resumes each child."""
 import json
 from pathlib import Path
 import uuid
+import tempfile
 
-from common import DELEGATION_KEY, DISPATCH_KEY, WAIT_OUTER, check_repo, cli, config_ref, delegation_config, entry_command, git, has_manual, link_config, merge_patch, read_config, request_config, repo_root, write_config
+from common import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, config_ref, delegation_config, download_config, entry_command, git, has_manual, link_config, read_config, request_config, repo_root, write_config
 from github_issue import issue_link, mirror_title
-from sop import Option, Parameter, State, Workflow
-
-CACHE_VIEW = False
+from sop import FINISHED, Option, Parameter, State, Workflow
 
 FIELDS = {**dict.fromkeys(('name', 'request', 'direction', 'title', 'scope', 'question', 'github_issue', 'branch', 'parent_branch'), str),
           'manual': bool, 'sandbox': dict, 'questions': list}
-PROMPT = ('Align the config with this request, keeping choices that already fit. '
-          'If context leaves a field uncertain, ask the human one self-contained question and end this turn. '
-          'Use edit to record the answer; otherwise dispatch. If waiting for an outer reply: ' + WAIT_OUTER + ' ')
-COMMENTS = ('name is a short kebab-case feature name; direction selects installed defaults for scope, '
-            'question and branch prefix. Verification guidance comes from the project description. title defaults to name. '
-            'manual is a boolean; true publishes a remote feature branch and waits for superior approval. github_issue is an optional source URL. Configuration is an attachment; metadata retains its reference and dispatch progress.')
+WAIT_OUTER = 'do not call SoP and end this turn if no outer confirmation or edition instruction.'
+PROMPT = ('Read current sub-issues list delegation config <file path>, edit JSON offline and upload '
+          'the version via refresh --config-file PATH. ' + WAIT_OUTER)
 
 
 def save_progress(context):
@@ -24,97 +20,115 @@ def save_progress(context):
         '--value', json.dumps(context['record']), '--type', 'string')
 
 
-def configured(context):
-    main = cli('issue', 'get', context['issue_id'])
-    source = config_ref(main)
-    if (not source or context['workspace_id'] != main['workspace_id']
-            or context['agent_id'] != main['assignee_id']):
-        raise context['error']('wrong_agent', 'Delegation belongs to the configured MAIN and its native assignee.')
-    installed = read_config(source)
-    record = json.loads(main.get('metadata', {}).get(DISPATCH_KEY, '{}'))
-    reference = config_ref(main, DELEGATION_KEY)
-    context.update(main=main, installed=installed, record=record, reference=reference)
-    args = context['args']
-    if args.thread:
-        context['state']['reply_parent'] = args.thread
-    if args.config is not None:
-        request = json.loads(args.config)
-        if (not isinstance(request, dict) or set(request) - set(FIELDS)
-                or any(not isinstance(value, FIELDS[key]) for key, value in request.items())):
-            raise ValueError('--config expects request fields with their declared types: ' + ', '.join(FIELDS))
-        if reference and not (record.get('dispatched') and args.thread and args.thread != record.get('thread')):
-            raise ValueError('Resume without --config and use edit; a new request needs a new --thread after dispatch.')
-    elif reference:
-        context['config'] = request_config(read_config(reference), installed)
-        return
-    else:
-        request = {}
-    reference = {'issue_id': main['id'], 'filename': 'featssship.delegation-' + str(uuid.uuid4()) + '.json'}
-    request.setdefault('manual', has_manual(main) or installed.get('manual', False))
-    config = delegation_config(installed, request, source, main['id'])
-    write_config(reference, config, args.thread, 'Edit or confirm.')
-    link_config(main['id'], reference, DELEGATION_KEY)
-    context.update(config=request_config(config, installed), reference=reference, record={'thread': args.thread})
+def publish(batch, context):
+    envelope = {'source': config_ref(context['main']), 'main_issue_id': context['issue_id'],
+                'dispatch_thread': context['record']['thread']}
+    if (not isinstance(batch, dict) or set(batch) - {'issues', *envelope}
+            or not isinstance(batch.get('issues'), list) or not batch['issues']
+            or any(key in batch and batch[key] != value for key, value in envelope.items())):
+        raise ValueError('Use {"issues": [{...}]} and keep source/owner/thread references unchanged.')
+    if any(not isinstance(item, dict) or set(item) - set(FIELDS)
+           or any(not isinstance(value, FIELDS[key]) for key, value in item.items()) for item in batch['issues']):
+        raise ValueError('Each issues item accepts typed request fields: ' + ', '.join(FIELDS))
+    for item in batch['issues']:
+        item.setdefault('manual', has_manual(context['main']) or context['installed'].get('manual', False))
+    config = delegation_config(context['installed'], batch, **envelope)
+    row = write_config(context['reference'], config, context['args'].thread or envelope['dispatch_thread'], 'Refresh, confirm or accept.')
+    context['record'] = {'thread': envelope['dispatch_thread'], 'draft_comment_id': row['id'],
+                         'draft_attachment_id': attachment(context['reference'])['id']}
     save_progress(context)
-    # Recovery resumes the saved document, never a JSON payload cached in SoP state.
-    if '--config' in context['argv']:
-        index = context['argv'].index('--config')
-        del context['argv'][index:index + 2]
-    args.config = None
+
+
+def configured(context):
+    main, args = cli('issue', 'get', context['issue_id']), context['args']
+    source = config_ref(main)
+    if not source or main['workspace_id'] != context['workspace_id'] or main['assignee_id'] != context['agent_id']:
+        raise context['error']('wrong_agent', 'Use the configured MAIN and its native assignee.')
+    context.update(main=main, installed=read_config(source), reference=config_ref(main, DELEGATION_KEY),
+                   record=json.loads(main.get('metadata', {}).get(DISPATCH_KEY, '{}')))
+    if args.config is not None or not context['reference']:
+        if context['reference'] and not (context['record'].get('dispatched') and args.thread and args.thread != context['record']['thread']):
+            raise ValueError('Use refresh; a new batch needs a new --thread after full dispatch.')
+        if not args.thread:
+            raise ValueError('Start with --thread <original MAIN request comment>.')
+        batch = json.loads(args.config) if args.config is not None else {'issues': [{}]}
+        context.update(record={'thread': args.thread}, reference={
+            'issue_id': main['id'], 'filename': 'featssship.delegation-' + str(uuid.uuid4()) + '.json'})
+        publish(batch, context)
+        link_config(main['id'], context['reference'], DELEGATION_KEY)
+        args.config, context['argv'] = None, []  # Recalls read the document, never the initial JSON.
+    path = download_config(context['reference'], tempfile.mkdtemp(prefix='featssship-delegation-'))
+    context.update(config=json.loads(path.read_text()), config_path=str(path),
+                   revision=attachment(context['reference'])['id'])
 
 
 def view(context):
-    return {'instruction': PROMPT + COMMENTS + '\n\nRead the latest delegation attachment: ' + json.dumps(context['reference'])}
+    return {'instruction': PROMPT.replace('<file path>', context['config_path'])}
 
 
-def edit(args, context):
+def refresh(args, context):
     """```dot
-    digraph edit { node [shape=box]; patch [label="Merge patch into delegation document"];
-        save [label="Publish attachment revision; retain only its reference"];
-        patch -> save; }
+    digraph refresh { node [shape=box]; read [label="Read offline JSON and validate issues"];
+        upload [label="Replace attachment; clear approval"]; read -> upload; }
     ```"""
-    if context['record'].get('issue_id'):
-        raise ValueError('This request is already dispatched; start a new request with --thread and --config.')
-    patch = json.loads(args.patch)
-    if not isinstance(patch, dict) or set(patch) - set(FIELDS) or any(value is not None and not isinstance(value, FIELDS[key]) for key, value in patch.items()):
-        raise ValueError('--patch expects request fields with their declared types, or null: ' + ', '.join(FIELDS))
-    request = merge_patch({key: value for key, value in read_config(context['reference']).items() if key in FIELDS}, patch)
-    context['config'] = delegation_config(context['installed'], request, config_ref(context['main']), context['issue_id'])
-    write_config(context['reference'], context['config'], args.thread or context['state'].get('reply_parent'), 'Edit or confirm.')
-    context['config'] = request_config(context['config'], context['installed'])
-    args.patch = '{}'
-    context['argv'] = ['edit', '--patch', '{}']
+    if any(item.get('issue_id') for item in context['record'].get('items', [])):
+        raise ValueError('Children exist; resume dispatch instead of refreshing this batch.')
+    publish(json.loads(Path(args.config_file).read_text()), context)
+    context['argv'] = []
+    configured(context)
 
 
 def dispatch(args, context):
     """```dot
-    digraph dispatch { node [shape=box]; validate [label="Require complete config"];
-        child [label="Create child once or resume saved dispatch"];
-        publish [label="Prepare local worktree; remote branch only if manual"];
-        start [label="Start Developer; retain document reference and checkpoint"];
-        validate -> child -> publish -> start; }
+    digraph dispatch { gate [label="Verify original human approval of current batch"];
+        items [label="Create/resume children and branches; skip successes"]; report [label="All dispatched: finish; partial failures: report and stay grilling"];
+        gate -> items -> report; }
     ```"""
-    record, request = context['record'], context['config']
+    record, config = context['record'], context['config']
+    if record['draft_attachment_id'] != context['revision']:
+        raise context['error']('invalid_input', 'Refresh and obtain human approval of the current batch first.')
+    if not record.get('approval_comment_id'):
+        rows = cli('issue', 'comment', 'list', context['issue_id'], '--thread', record['draft_comment_id'], '--tail', '30')
+        draft = next((row for row in rows if row['id'] == record['draft_comment_id']), None)
+        human = next((row for row in reversed(rows)
+                      if row['id'] == args.thread or (not args.thread and row.get('author_type') == 'member')), None)
+        if (not draft or not human or human.get('author_type') != 'member'
+                or human['content'].strip().casefold() not in ('confirm', 'accept', 'confirmed', 'accepted', 'approve', 'approved')
+                or rows.index(human) <= rows.index(draft)):
+            raise context['error']('invalid_input', 'The human must confirm or accept the current batch draft in its thread.')
+        record['approval_comment_id'] = human['id']
+        save_progress(context)
+    batch = [request_config(config, context['installed'], index=i) for i in range(len(config['issues']))]
+    for index, request in enumerate(batch):
+        missing = [key for key in ('name', 'request', 'direction', 'scope', 'question') if not (request.get(key) or '').strip()]
+        if missing or request['direction'] not in {d['name'] for d in context['installed']['directions']}:
+            raise ValueError('issues[' + str(index) + '] needs an installed direction and: ' + ', '.join(missing))
+    progress = record.setdefault('items', [{} for _ in batch])
+    failures = []
+    for index, (request, item) in enumerate(zip(batch, progress)):
+        try:
+            dispatch_item(context, request, item, index)
+            item.pop('branch_base', None)
+            item.pop('remote_reserved', None)
+        except ValueError as error:
+            failures.append('issues[' + str(index) + '] ' + request['name'] + ': ' + str(error))
+    record['dispatched'] = all(item.get('dispatched') for item in progress)
+    save_progress(context)
+    children = [item['issue_id'] for item in progress if item.get('dispatched')]
+    return {'accepted': record['dispatched'], 'instruction':
+            'Dispatched ' + str(len(children)) + '/' + str(len(batch)) + ': ' + ', '.join(children) +
+            ('. Retry unfinished items.\n' + '\n'.join(failures) if failures else '; end this turn.')}
+
+
+def dispatch_item(context, request, record, index):
+    if record.get('dispatched'):
+        return
     if record.get('issue_id'):
         child = cli('issue', 'get', record['issue_id'])
         if config_ref(child, DELEGATION_KEY) and child['status'] != 'backlog':
             record['dispatched'] = True
             save_progress(context)
-            return {'instruction': 'Already dispatched to ' + child['id'] + '; end this turn.'}
-    missing = [key for key in ('name', 'request', 'direction', 'scope', 'question') if not (request.get(key) or '').strip()]
-    if missing:
-        return {'accepted': False, 'instruction': view(context)['instruction'] +
-                '\n\nFill from context or ask one question about: ' + ', '.join(missing)}
-    if not record.get('thread'):
-        raise ValueError('Pass the original MAIN request comment with --thread before dispatch.')
-    directions = context['installed']['directions']
-    selected = next((d for d in directions if d['name'] == request['direction']), None)
-    if not selected:
-        raise ValueError('Choose a configured direction: ' + ', '.join(d['name'] for d in directions))
-    if not record.get('issue_id'):
-        document = {**read_config(context['reference']), 'direction': request['direction'],
-                    'branch': request['branch'], 'dispatch_thread': record['thread']}
-        write_config(context['reference'], document, args.thread or context['state'].get('reply_parent'))
+            return
     branch = request['branch']
     title = request.get('title') or request['name']
     url = issue_link(title, request.get('github_issue'))
@@ -159,7 +173,7 @@ def dispatch(args, context):
         label = next((label for label in labels if label['name'] == 'manual'), None)
         label = label or cli('label', 'create', '--name', 'manual', '--color', '#64748b')
         cli('issue', 'label', 'add', child['id'], label['id'])
-    link_config(child['id'], context['reference'], DELEGATION_KEY)
+    link_config(child['id'], {**context['reference'], 'index': index}, DELEGATION_KEY)
     description = (request['request'] + '\n\nScope: ' + request['scope'] + '\n\nAcceptance: ' + request['question'] +
                    '\n\nUse the prepared feature worktree: ' + str(worktree) + '\n\nFollow the verification guidance in the project description.\n\n' +
                    entry_command('multica-featssship-develop-review') + '\n\nMAIN selected branch: ' + branch +
@@ -170,16 +184,14 @@ def dispatch(args, context):
         cli('issue', 'status', child['id'], 'todo')
     record['dispatched'] = True
     save_progress(context)
-    return {'instruction': 'Dispatched to ' + child['id'] + '; end this turn.'}
 
 
 workflow = Workflow(
     State('grilling', PROMPT, initial=True, precheck=configured, view=view, options=(
-        Option('edit', 'grilling', 'Update only the settings that need changing.', edit,
-               params=(Parameter('--patch', 'JSON merge patch for the request config'),)),
-        Option('dispatch', 'finished', 'Dispatch the settled config; retries resume the same child.', dispatch),
+        Option('refresh', 'grilling', 'Validate and upload the whole offline JSON; clear approval.', refresh,
+               params=(Parameter('--config-file', 'Path to the complete batch JSON'),)),
+        Option('dispatch', FINISHED, 'Check human approval; dispatch all or stay grilling to retry.', dispatch),
     )),
-    State('finished', 'MAIN waits for one verified result from the feature issue.', final=True),
-    params=(Parameter('--thread', 'Native request/trigger comment UUID; a new request needs a new thread', required=False),
-            Parameter('--config', 'Initial request config JSON; omit when resuming or editing', required=False)),
+    params=(Parameter('--thread', 'Native trigger UUID; original request when starting a batch', required=False),
+            Parameter('--config', 'Initial {"issues": [{}]} JSON; omit to resume', required=False)),
 )
