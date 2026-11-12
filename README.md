@@ -33,8 +33,8 @@ Do not search for or ask the human to create a separate MAIN issue.
 
 Describe a batch of issues on MAIN. MAIN drafts one `{"issues":[...]}` config
 (default: one item). Download and edit the whole JSON, then use
-`refresh --config-file PATH` to replace it. Reply `confirm` or `accept` after the
-latest draft. MAIN runs `dispatch` directly from grilling; it checks that human
+`refresh --config-file PATH` to replace it. Confirm or accept the latest draft in
+your own words. MAIN runs `dispatch` directly from grilling; it checks that human
 approval before creating children or branches. Partial batches stay in grilling
 and resume without recreating children.
 Reviewer approves or requests corrections in the same feature issue, then owns

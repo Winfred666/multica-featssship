@@ -9,8 +9,8 @@ repository with `--thread <request UUID>` and optional `--config '{"issues":[{}]
 
 Edit the shown JSON file offline; `refresh --config-file PATH` uploads the whole
 batch and invalidates approval. Run `dispatch` only after the original human
-`confirm` or `accept` reply to the latest draft. Do not call SoP and end this turn
-if no outer confirmation or edition instruction.
+confirms or accepts the latest draft; judge intent, not exact wording. Do not call
+SoP and end this turn if no outer confirmation or edition instruction.
 
 Retry partial batches with `dispatch`; successful children are reused. Do not
 refresh once a child exists. Follow errors, reconcile writes before retrying,

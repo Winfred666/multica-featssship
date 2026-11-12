@@ -33,7 +33,7 @@ def publish(batch, context):
     for item in batch['issues']:
         item.setdefault('manual', has_manual(context['main']) or context['installed'].get('manual', False))
     config = delegation_config(context['installed'], batch, **envelope)
-    row = write_config(context['reference'], config, context['args'].thread or envelope['dispatch_thread'], 'Refresh, confirm or accept.')
+    row = write_config(context['reference'], config, context['args'].thread or envelope['dispatch_thread'], 'Config refreshed. Confirm or edit further ?')
     context['record'] = {'thread': envelope['dispatch_thread'], 'draft_comment_id': row['id'],
                          'draft_attachment_id': attachment(context['reference'])['id']}
     save_progress(context)
@@ -93,7 +93,6 @@ def dispatch(args, context):
         human = next((row for row in reversed(rows)
                       if row['id'] == args.thread or (not args.thread and row.get('author_type') == 'member')), None)
         if (not draft or not human or human.get('author_type') != 'member'
-                or human['content'].strip().casefold() not in ('confirm', 'accept', 'confirmed', 'accepted', 'approve', 'approved')
                 or rows.index(human) <= rows.index(draft)):
             raise context['error']('invalid_input', 'The human must confirm or accept the current batch draft in its thread.')
         record['approval_comment_id'] = human['id']
