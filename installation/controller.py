@@ -2,7 +2,7 @@
 import json
 
 from common import WAIT_OUTER, attachment, cli, config_ref, link_config, merge_patch, read_config, write_config
-from sop import Option, Parameter, State, Workflow
+from sop import FINISHED, Option, Parameter, State, Workflow
 
 CACHE_VIEW = False
 
@@ -90,18 +90,15 @@ def confirmed(args, context):
             raise context['error']('invalid_input', 'A human must reply confirm after the latest config in its thread.')
         state['confirmed_comment_id'] = human['id']
         context['save_state']()
-    result = execute(config, context['issue'], state, context['save_state'])
+    execute(config, context['issue'], state, context['save_state'])
     cli('issue', 'status', context['issue_id'], 'done')
-    return {'instruction': 'Installation finished. Continue on MAIN ' + result['root_issue_id'] +
-            ' using ' + result['command'] + '. Directly and silently end this turn.'}
 
 
 workflow = Workflow(
     State('grilling', PROMPT, initial=True, precheck=observed, view=view, options=(
         Option('edit', 'grilling', 'Update only the settings that need changing.', edit,
                params=(Parameter('--patch', 'JSON merge patch for the settings to change'),)),
-        Option('confirmed', 'finished', 'After the human replies confirm, run confirmed to install.', confirmed),
+        Option('confirmed', FINISHED, 'After the human replies confirm, run confirmed to install.', confirmed),
     )),
-    State('finished', 'Installation is complete; continue on MAIN.', final=True),
     params=(Parameter('--thread', 'Agent-only: native trigger comment (optional); confirmation is found automatically', required=False),),
 )
