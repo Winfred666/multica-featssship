@@ -6,8 +6,8 @@ Installation has two states:
 digraph installation {
   rankdir=LR; node [shape=box];
   grilling [label="grilling: align config with the requested workflow"];
-  finished [label="finished: MAIN process config copied; installer done"];
-  grilling -> grilling [label="edit JSON merge patch; comment config; ask edit or confirm; exit silently if not outer-confirmed"];
+  finished [label="finished: MAIN linked to master; installer done"];
+  grilling -> grilling [label="edit JSON merge patch; attach config; ask edit or confirm; exit silently if not outer-confirmed"];
   grilling -> finished [label="confirmed by human: install roles/skills and create/reuse MAIN"];
 }
 ```
@@ -17,37 +17,44 @@ settings that already fit, and edit again as needed. Ask one human question only
 when context leaves something unclear. Editing does not create
 roles, skills or MAIN. Confirmation must be a human reply after the latest config
 comment. The human only replies `confirm`; the agent runs `confirmed` and the
-script finds that reply automatically. The JSON role key is `delegator`, while
-the independent issue keeps its `MAIN DEV:` title. Installation metadata alone owns
-init settings and proven installed_* checkpoints; there are no local answers or
-binding JSON files. MAIN is created without a parent and its ID is saved in the
-active installation record for retries. Re-entry after completion keeps saved config and creates another MAIN.
-MAIN subscribes CEO and stores `installation_issue_id` beside its process settings.
-The installer enters done while MAIN continues independently. Each feature stores
-`main_issue_id` beside its shipping settings. Identities and init defaults resolve
-through these explicit references, never installation-parent ancestry.
-Before replacing shared skills, installation converts legacy stored parent links
-to these explicit metadata references across the workspace. Existing references
-and all other process settings remain unchanged; runtime resolution has no ancestry fallback.
-The project description receives repository/scope/test context,
-never questions or installed IDs. Upgrades replace only the installer's marked
-block and remove the previous full-config record from MAIN.
-The installer action graphs live in [its controller](../roles/installation.py).
+script finds that reply automatically. The JSON role key is `delegator`. The installer owns one logical master JSON
+attachment containing installation settings and defaults. MAIN receives only
+its explicit owner/filename reference in `featssship.config`, not copied defaults
+or an installer-parent link. It subscribes CEO and runs independently after the
+installer finishes. Re-entry preserves settings and starts another MAIN;
+unfinished cycles retain their immediate MAIN checkpoint for retries.
 
-MAIN delegation also has only `grilling` and `finished` states. Pass the known
-request config with `--config` on first activation; it starts in grilling. Use
-`edit --patch` to change config, staying in grilling while anything is uncertain.
-Dispatch requires complete fields. Config and the saved child checkpoint remain
-under MAIN's `featssship.delegation` metadata after dispatch; no comment lookup,
-local config file, drafting stage or propose action is needed. Retry dispatch
-resumes the same child; a new request supplies a new thread and config.
-`test_command` is not a delegation field or copied child setting. The feature
-verifier reads the selected direction’s check from the installer-owned project
-description; MAIN does not copy it from installation metadata.
+Attachment revisions temporarily replace unavailable native mutable deliverables.
+`common.py` isolates upload and authenticated download/read, with TODOs for native
+update/preview. Grilling publishes one `Edit or confirm.` attachment revision in the
+existing thread; other revisions use an empty-rendering comment. Readers select the latest matching owner/filename. References
+remain valid after edits, across issues. Serialize edits; immutable attachments
+provide no compare-and-swap. Old revisions remain history. Defaults are created
+only when the master document is absent. Nothing caches JSON locally or in SoP
+state. Cached guidance contains routing text only, not rendered configuration.
+See [README](../README.md#configuration) for editing. Runtime resolution has no
+metadata fallback or ancestry lookup. Stale owned MAIN configuration can be
+deleted on upgrade; retain live execution checkpoints and unrelated data.
+
+The project description still owns verification guidance and repository/scope
+context, never selected review questions or installed identities.
+The installer action graphs live in [its controller](../installation/controller.py).
+
+MAIN delegation has `grilling` and `finished` states. Pass known request fields
+with `--config` on first activation, then `edit --patch` to settle uncertainty.
+The derived `featssship.delegation-<id>.json` records its master source reference,
+request overrides and the settled branch. Universal settings, questions and
+mention identities resolve directly from the installer attachment on each read. Dispatch links the
+feature to that exact document. Dev-rev reads it directly; it never creates its
+own config. MAIN retains only the document reference and `featssship.dispatch`
+checkpoints, so retries reuse the child even after terminal state cleanup. New
+requests use a new thread/config and a distinct document filename. Their feature
+references still resolve the earlier document. The verifier reads the selected
+direction's command from the project description, not a copied delegation check.
 
 MAIN passes a short name;
 the configured direction prefix formats the feature branch. The child uses its
-prepared issue worktree for one shared [procedure](../roles/feature.py):
+prepared issue worktree for one shared [procedure](../delegation/dev-rev/controller.py):
 
 ```dot
 digraph develop_review {
@@ -66,7 +73,7 @@ digraph develop_review {
   approval -> manual_approve [label="manual"];
   approve -> merge_result [label="approve: merge_approved"];
   manual_approve -> merge_result [label="approve: same merge_approved; ONLY outer allowed"];
-  manual_approve -> develop [label="rework: ONLY outer allowed"];
+  manual_approve -> develop [label="rework: Reviewer returns corrections"];
   develop -> finished [label="cancel: cleanup only"];
   review -> finished [label="cancel: cleanup only"];
   manual_approve -> finished [label="cancel: cleanup only; ONLY outer allowed"];
@@ -106,26 +113,17 @@ feature tree/branch, marks the issue cancelled and enters finished without tests
 integration or pushes. Reviewer may invoke this fixed cleanup but remains
 read-only for source; approved integration runs the scripted checks. Human acceptance owns done.
 
-Declare `Branch('merge_result', ..., {'rework': 'develop', 'merged': 'finished'})`
-in `Workflow` to validate the destinations and expose the HTML diamond. The
-Python action implements Git operations and returns the selected phase; Branch
-itself does not execute a function. A Python if/returned phase can run without
-Branch, but then the graph cannot show that global decision and its destinations
-are not branch-validated. A DOT docstring explains local logic only. Because terminal
-states have no actions, the success tail runs in the incoming action before
-returning finished. State owners resolve native `{id, name}` in the wrapper for actor checks, handoffs and tiny HTML labels.
+State owners resolve native `{id, name}` in the wrapper for actor checks,
+handoffs and tiny HTML labels.
 
 Each successful delivery
-posts one concise recipient mention without TODO, self-reference or SHA. Developer and
-MAIN labels use their configured agent names; Reviewer handoffs use the declared
-review state owner, just like actor checks and graph labels.
-Reports to MAIN are receipt-only notes under the original dispatch comment, using
-`[@all](mention://all/all)` to suppress implicit agent wakeups, with no agent mention
-or steering. The child feature link remains available for manual review. The dispatch
-thread is retained in the feature's process configuration. Manual decisions are
-interpreted by the acting agent; the script checks superior identity and ordering,
-not literal approval wording. A blocked recipient outcome fails the handoff rather
-than reporting delivery success. Steering requires a matching running
+posts one concise recipient mention using the declared state's native owner name, without
+TODO, self-reference or SHA. Reports to MAIN are receipt-only notes under the
+original dispatch comment, using `[@all](mention://all/all)` without agent mentions
+or steering. The delegation attachment retains that request's dispatch thread.
+The acting agent interprets superior instructions; scripts verify identity and
+ordering, not literal approval wording. Blocked recipient delivery fails the
+handoff. Steering requires a matching running
 recipient with `can_supplement: true`; otherwise the mention takes the normal route.
 The sender exits silently after handoff: "Rework sent, directly and silently exit"
 for rework, the conditional superior wait for manual approval, and otherwise
@@ -136,17 +134,20 @@ the runner ([multica-RSI#40](https://github.com/Winfred666/multica-RSI/issues/40
 Wrong-role action calls exit nonzero on stderr without JSON or writes.
 
 Select `review` to inspect the issue's criteria and selected process questions.
-Installation initializes each direction's string-list `questions`; MAIN copies
-only the selected direction's list into a feature, together with its feature-specific
-Acceptance question. Reviewer returns one `--finding` with `approve` or `rework`.
+The selected direction supplies universal review questions; the delegation adds
+only its request-specific acceptance/question overrides. Reviewer returns one `--finding` with `approve` or `rework`.
 Question order is presentation order, not per-question stepping or parallel tasks.
 MAIN's clarification loop still asks the human one question at a time, exiting
 silently if outer confirmation has not been received yet.
 
 The HTML graph comes from `Workflow`; action docstrings explain local logic.
-`DEBUG` defaults to `true` in the root and newly built packages' `config.json`.
+`DEBUG` defaults to `true` in the source bundles and newly built packages' `config.json`.
 During native runs, each state change or completion publishes an HTML graph
 highlighting the actual resulting state. Selecting a node only inspects its
 guidance; it does not advance the workflow. Package rebuilds retain existing
 settings, so enable `DEBUG` explicitly in older packages. No renderer service
 is required.
+
+`installation/` owns the reusable common module and runtime. The builder includes
+them in each standalone installation, delegation and dev-rev package; source
+controllers remain in their respective procedure folders.

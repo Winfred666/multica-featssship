@@ -260,6 +260,7 @@ def state_owner(workflow, phase, context):
 
 
 def transition(args, context, controller):
+    from sop import Completed
     workflow = controller.workflow
     phases = set(workflow.states)
     state = read_state(context, phases | {'error', 'blocked'})
@@ -305,10 +306,7 @@ def transition(args, context, controller):
             result = None
             try:
                 initial = assertion_before(workflow, context)
-            except Exception as error:
-                from sop import Completed
-                if not isinstance(error, Completed):
-                    raise
+            except Completed as error:
                 context.pop('assertion', None)
                 initial = context.get('initial')
                 result = error.result
@@ -651,6 +649,9 @@ def main(argv=None):
     if controller and context.get('state'):
         state = context['state']
         state['output'] = output
+        if not getattr(controller, 'CACHE_VIEW', True):
+            state['output'] = {'status': state.get('status'), 'instruction': controller.workflow.states.get(
+                state.get('status'), controller.workflow.states[controller.workflow.initial]).description}
         if not context.get('state_deleted') and not context.get('state_write_failed'):
             try:
                 save_state(context, state)

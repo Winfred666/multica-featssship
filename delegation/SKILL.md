@@ -8,10 +8,12 @@ Use in the installed MAIN DEV: issue. From the target repository root, run
 triggers, pass `--thread <trigger UUID>` first.
 
 Start directly in `grilling`, passing `--config '<JSON>'` with known request fields
-on the first invocation. Config lives in MAIN issue metadata, not a local JSON
-file or a comment. Use `edit --patch '<JSON merge patch>'` to
+on the first invocation. The installer-owned master is linked by `featssship.config`; request settings
+live in a derived JSON attachment linked by `featssship.delegation`. Read the
+referenced owner issue, download its latest attachment with that filename, and
+read the JSON. Metadata never stores settings. Use `edit --patch '<JSON merge patch>'` to
 record changes. Ask one human question only when context leaves a field uncertain;
-otherwise dispatch. If waiting for an outer reply, exit directly and silently if outer confirmation has not been received yet. Config and the child checkpoint remain after dispatch.
+otherwise dispatch. If waiting for an outer reply, exit directly and silently if outer confirmation has not been received yet. The document reference and child checkpoint remain after dispatch.
 A new request uses a new `--thread` and `--config`; a retry reuses its existing child.
 Dispatch requires the original request comment so completion can leave a receipt-only
 note in that same thread without waking MAIN.
@@ -26,7 +28,7 @@ explicitly approves its creation during delegation; set `github_issue` in the
 delegation config to its URL. Never create feature issues for trivial fixtures or
 very minor features. MAIN receives the final result and ends the turn when instructed.
 Use `--help` to replay the saved decision, or read this body for a new/completed issue flow.
-Installation: README.md.
+Installation: the featssship source README and `installation/wrapper.py`.
 
 In every state, follow returned error guidance and finish unmet prerequisites
 before retrying. Reconcile writes first. For assertion failures, use the returned

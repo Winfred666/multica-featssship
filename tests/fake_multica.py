@@ -63,6 +63,11 @@ def main():
         rows = list(db['issues'].values())
         offset, limit = int(option('offset', '0')), int(option('limit', '50'))
         result = {'issues': rows[offset:offset + limit], 'has_more': offset + limit < len(rows)}
+    elif args[:2] == ['attachment', 'download']:
+        row = db['attachments'][args[2]]
+        destination = Path(option('output-dir')) / row['filename']
+        destination.write_text(row['data'])
+        result = {'path': str(destination)}
     elif args[:2] == ['issue', 'get']:
         result = db['issues'][args[2]]
     elif args[:3] == ['issue', 'subscriber', 'add']:
@@ -115,6 +120,13 @@ def main():
         result = {'id': new(), 'issue_id': args[3], 'parent_id': parent, 'content': text('content'),
                   'author_type': 'agent', 'author_id': os.environ.get('MULTICA_AGENT_ID'),
                   'source_task_id': os.environ.get('MULTICA_TASK_ID')}
+        if option('attachment'):
+            file = Path(option('attachment'))
+            attachment = {'id': new(), 'filename': file.name, 'data': file.read_text(),
+                          'created_at': str(len(db.setdefault('attachments', {}))).zfill(10)}
+            db['attachments'][attachment['id']] = attachment
+            result['attachments'] = [attachment]
+            db['issues'][args[3]].setdefault('attachments', []).append(attachment)
         db['comments'].append(result)
     elif args[:3] == ['issue', 'comment', 'list']:
         rows = [row for row in db['comments'] if row['issue_id'] == args[3]]

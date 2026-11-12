@@ -15,9 +15,10 @@ Developer owns only `develop`: implement one feature commit, amend corrections,
 test and submit. Reviewer owns every later state, including `finished`.
 In `review`, read the exact submitted diff without source edits or tests. Answer
 acceptance and process questions together in one `--finding`; approve or rework.
+Reviewer can return corrections from review or manual_approve; only Developer implements.
 Automatic approval continues to `approve` with the same Reviewer. With
 `manual: true`, wait in `manual_approve` and exit silently until a human or MAIN
-instructs approve/rework/cancel in the review thread. Reviewer executes that choice.
+instructs approve/cancel in the review thread. Reviewer executes that choice.
 Only manual submissions push a remote feature branch.
 
 Both approval choices run `merge_approved`: verify the approved HEAD, merge/test,
@@ -42,6 +43,9 @@ sender instructions. This is guidance, not a runner-enforced stop. Failed
 delivery remains an error. Wrong-role calls exit nonzero on stderr with no JSON
 or state write.
 
-Both roles share one issue metadata record. `--help` reads guidance without
+Both roles read the same dispatch-authored delegation attachment through
+`featssship.delegation`; never create or copy a config. Configuration access
+needs only the explicit owner/filename reference, not installer ancestry.
+Both roles share one execution metadata record. `--help` reads guidance without
 advancing. Follow returned errors; reconcile writes before retrying. Use a
 returned `repaired` callback once for an assertion failure.
