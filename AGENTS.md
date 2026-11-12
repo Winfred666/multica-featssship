@@ -42,7 +42,7 @@ in the master and execution checkpoints in metadata. Resolve settings through
 owner/filename references, never installation-parent ancestry. Do not add nested-issue hierarchy
 or rubric-style tests; keep verification focused on functional shipping behavior. Project context may include
 repository/scope/tests, never review questions or installed IDs. After edit, attach
-tidy JSON, ask the human to edit or confirm, and tell the agent to exit silently if outer confirmation has not been received yet.
+tidy JSON, ask the human to edit or confirm, and tell the agent to directly and silently end this turn if outer confirmation has not been received yet.
 
 The feature procedure stores one current record under
 `issue.metadata["sop.multica-featssship-develop-review"]`; completion removes only

@@ -13,7 +13,7 @@ live in a derived JSON attachment linked by `featssship.delegation`. Read the
 referenced owner issue, download its latest attachment with that filename, and
 read the JSON. Metadata never stores settings. Use `edit --patch '<JSON merge patch>'` to
 record changes. Ask one human question only when context leaves a field uncertain;
-otherwise dispatch. If waiting for an outer reply, exit directly and silently if outer confirmation has not been received yet. The document reference and child checkpoint remain after dispatch.
+otherwise dispatch. If waiting for an outer reply, directly and silently end this turn if outer confirmation has not been received yet. The document reference and child checkpoint remain after dispatch.
 A new request uses a new `--thread` and `--config`; a retry reuses its existing child.
 Dispatch requires the original request comment so completion can leave a receipt-only
 note in that same thread without waking MAIN.

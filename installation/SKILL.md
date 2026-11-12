@@ -16,7 +16,7 @@ when context leaves something unclear. Pass
 `--thread <trigger UUID>` on a comment-triggered invocation.
 
 After edit, the script attaches tidy JSON in the existing thread and asks the
-human to edit or confirm. Download/read the newest attachment to inspect it. Exit silently if outer confirmation has not been received yet; after confirmation, continue. The human only replies `confirm`; no command
+human to edit or confirm. Download/read the newest attachment to inspect it. Directly and silently end this turn if outer confirmation has not been received yet; after confirmation, continue. The human only replies `confirm`; no command
 or UUID is needed. The agent then runs confirmed, which finds the reply automatically.
 Installation creates MAIN without a parent, subscribes CEO, and links MAIN
 to that same master document.

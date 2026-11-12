@@ -6,9 +6,9 @@ import subprocess
 import tempfile
 
 # TODO: Runtime-enforced completion belongs to https://github.com/Winfred666/multica-RSI/issues/40.
-ROUND_DONE = 'Delivery/review/work done this round, exit directly and silently'
-REWORK_DONE = 'Rework sent, directly and silently exit'
-WAIT_OUTER = 'Directly and silently exit if outer confirmation has not been received yet.'
+ROUND_DONE = 'Delivery done this round, directly and silently end this turn'
+REWORK_DONE = 'Rework sent, directly and silently end this turn'
+WAIT_OUTER = 'Directly and silently end this turn if outer confirmation has not been received yet.'
 CONFIG_KEY = 'featssship.config'
 DELEGATION_KEY = 'featssship.delegation'
 DISPATCH_KEY = 'featssship.dispatch'

@@ -7,7 +7,7 @@ digraph installation {
   rankdir=LR; node [shape=box];
   grilling [label="grilling: align config with the requested workflow"];
   finished [label="finished: MAIN linked to master; installer done"];
-  grilling -> grilling [label="edit JSON merge patch; attach config; ask edit or confirm; exit silently if not outer-confirmed"];
+  grilling -> grilling [label="edit JSON merge patch; attach config; ask edit or confirm; end this turn silently if not outer-confirmed"];
   grilling -> finished [label="confirmed by human: install roles/skills and create/reuse MAIN"];
 }
 ```
@@ -71,8 +71,8 @@ digraph develop_review {
   review -> approval [label="approve"];
   approval -> approve [label="automatic"];
   approval -> manual_approve [label="manual"];
-  approve -> merge_result [label="approve: merge_approved"];
-  manual_approve -> merge_result [label="approve: same merge_approved; ONLY outer allowed"];
+  approve -> merge_result [label="final_approve: merge_approved"];
+  manual_approve -> merge_result [label="final_approve: same merge_approved; ONLY outer allowed"];
   manual_approve -> develop [label="rework: Reviewer returns corrections"];
   develop -> finished [label="cancel: cleanup only"];
   review -> finished [label="cancel: cleanup only"];
@@ -95,8 +95,8 @@ features stay local until their approved result is pushed to the existing parent
 Features share no branch registry or SOP-wide lock.
 A manual config adds the manual label before the child starts. Review never
 creates a checkout or switches branches. Automated review approval hands the
-Reviewer the `approve` action; manual approval waits in `manual_approve` for
-human or MAIN input. Both approval options call the same `merge_approved`
+Reviewer the `final_approve` action; manual approval waits in `manual_approve` for
+human or MAIN input. Both states use `final_approve` to call the same `merge_approved`
 function. It checks the exact approved HEAD, merges/tests, and fast-forwards local
 main in its clean existing worktree (or atomically advances its unoccupied ref).
 No feature worktree changes branch. The merge-result diamond comes before terminal
@@ -119,15 +119,14 @@ handoffs and tiny HTML labels.
 Each successful delivery
 posts one concise recipient mention using the declared state's native owner name, without
 TODO, self-reference or SHA. Reports to MAIN are receipt-only notes under the
-original dispatch comment, using `[@all](mention://all/all)` without agent mentions
-or steering. The delegation attachment retains that request's dispatch thread.
+original dispatch comment, using native `/note` without mentions or steering. The delegation attachment retains that request's dispatch thread.
 The acting agent interprets superior instructions; scripts verify identity and
 ordering, not literal approval wording. Blocked recipient delivery fails the
 handoff. Steering requires a matching running
 recipient with `can_supplement: true`; otherwise the mention takes the normal route.
-The sender exits silently after handoff: "Rework sent, directly and silently exit"
-for rework, the conditional superior wait for manual approval, and otherwise
-"Delivery/review/work done this round, exit directly and silently". Metadata and HTML
+The sender ends this turn silently after handoff: "Rework sent, directly and silently end this turn"
+for rework, the superior wait for manual approval, and otherwise
+"Delivery done this round, directly and silently end this turn". Metadata and HTML
 retain the receiving role's guidance. Failures remain errors. This is guidance,
 not enforced turn completion or a measured token saving; enforcement belongs to
 the runner ([multica-RSI#40](https://github.com/Winfred666/multica-RSI/issues/40)).
@@ -137,8 +136,8 @@ Select `review` to inspect the issue's criteria and selected process questions.
 The selected direction supplies universal review questions; the delegation adds
 only its request-specific acceptance/question overrides. Reviewer returns one `--finding` with `approve` or `rework`.
 Question order is presentation order, not per-question stepping or parallel tasks.
-MAIN's clarification loop still asks the human one question at a time, exiting
-silently if outer confirmation has not been received yet.
+MAIN's clarification loop still asks the human one question at a time, ending
+this turn silently if outer confirmation has not been received yet.
 
 The HTML graph comes from `Workflow`; action docstrings explain local logic.
 `DEBUG` defaults to `true` in the source bundles and newly built packages' `config.json`.
