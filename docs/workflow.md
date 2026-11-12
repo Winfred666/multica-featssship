@@ -26,7 +26,7 @@ unfinished cycles retain their immediate MAIN checkpoint for retries.
 
 Attachment revisions temporarily replace unavailable native mutable deliverables.
 `common.py` isolates upload and authenticated download/read, with TODOs for native
-update/preview. Grilling publishes one `Edit or confirm.` attachment revision in the
+update/preview. Grilling publishes a confirmation prompt with each attachment revision in the
 existing thread; other revisions use an empty-rendering comment. Readers select the latest matching owner/filename. References
 remain valid after edits, across issues. Serialize edits; immutable attachments
 provide no compare-and-swap. Old revisions remain history. Defaults are created
@@ -40,17 +40,16 @@ The project description still owns verification guidance and repository/scope
 context, never selected review questions or installed identities.
 The installer action graphs live in [its controller](../installation/controller.py).
 
-MAIN delegation has `grilling` and `finished` states. Pass known request fields
-with `--config` on first activation, then `edit --patch` to settle uncertainty.
-The derived `featssship.delegation-<id>.json` records its master source reference,
-request overrides and the settled branch. Universal settings, questions and
-mention identities resolve directly from the installer attachment on each read. Dispatch links the
-feature to that exact document. Dev-rev reads it directly; it never creates its
-own config. MAIN retains only the document reference and `featssship.dispatch`
-checkpoints, so retries reuse the child even after terminal state cleanup. New
-requests use a new thread/config and a distinct document filename. Their feature
-references still resolve the earlier document. The verifier reads the selected
-direction's command from the project description, not a copied delegation check.
+MAIN runs one sequential batch with `--thread <request UUID>` and optional
+`--config '{"issues":[{}]}'` (one default item). Grilling shows a fresh JSON working
+copy; `refresh --config-file PATH` replaces the whole batch and invalidates approval.
+Dispatch requires the original member's confirmation or acceptance after that
+draft before creating children or branches. Partial failures retain checkpoints
+and retry in grilling without restarting successful children. Once a child exists,
+resume dispatch rather than refreshing.
+
+Children share the delegation attachment by item index; universal settings resolve
+from the installer master and verification commands from the project description.
 
 MAIN passes a short name;
 the configured direction prefix formats the feature branch. The child uses its
@@ -88,7 +87,7 @@ agent ID guards each phase. MAIN's `name: tree-horizontal-more` plus installed
 Developer owns only develop; Reviewer owns all subsequent states. Neither role names or creates the branch.
 Later actions reject another branch or repository; review and integration also reject a changed HEAD.
 Dispatch prepares the metadata-selected local branch and one issue-owned worktree.
-`manual` is a boolean inherited from installation and overridable per delegation.
+`manual` is a boolean inherited from installation and overridable per batch item.
 Only manual mode creates/pushes a remote feature branch; its first push leases
 the reserved revision and corrections lease the prior submission. Automatic
 features stay local until their approved result is pushed to the existing parent branch.
@@ -119,7 +118,7 @@ handoffs and tiny HTML labels.
 Each successful delivery
 posts one concise recipient mention using the declared state's native owner name, without
 TODO, self-reference or SHA. Reports to MAIN are receipt-only notes under the
-original dispatch comment, using native `/note` without mentions or steering. The delegation attachment retains that request's dispatch thread.
+original dispatch comment, using native `/note` without mentions or steering. The batch attachment retains the original dispatch thread.
 The acting agent interprets superior instructions; scripts verify identity and
 ordering, not literal approval wording. Blocked recipient delivery fails the
 handoff. Steering requires a matching running
@@ -136,8 +135,6 @@ Select `review` to inspect the issue's criteria and selected process questions.
 The selected direction supplies universal review questions; the delegation adds
 only its request-specific acceptance/question overrides. Reviewer returns one `--finding` with `approve` or `rework`.
 Question order is presentation order, not per-question stepping or parallel tasks.
-MAIN's clarification loop still asks the human one question at a time, ending
-this turn silently if outer confirmation has not been received yet.
 
 The HTML graph comes from `Workflow`; action docstrings explain local logic.
 `DEBUG` defaults to `true` in the source bundles and newly built packages' `config.json`.
@@ -145,8 +142,13 @@ During native runs, each state change or completion publishes an HTML graph
 highlighting the actual resulting state. Selecting a node only inspects its
 guidance; it does not advance the workflow. Package rebuilds retain existing
 settings, so enable `DEBUG` explicitly in older packages. No renderer service
-is required.
+is required. Callbacks use the running wrapper’s resolved file path; temporary
+preview builds show temporary paths, not installed skill locations.
 
 `installation/` owns the reusable common module and runtime. The builder includes
 them in each standalone installation, delegation and dev-rev package; source
 controllers remain in their respective procedure folders.
+
+Implementation note: delegation declares only `grilling`; runtime-owned `FINISHED`
+is the ringed-circle target that deletes only its SOP key and emits callback-free
+exit guidance. See the [runtime TODO](../installation/wrapper.py) for completion modes.

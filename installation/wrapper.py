@@ -243,17 +243,19 @@ def recovery_result(receipt, status, context):
 def validate_result(result, phase, workflow, args):
     next_phase = result['phase']
     accepted = result.get('accepted', True)
-    if next_phase not in workflow.states:
+    if next_phase not in workflow.states and next_phase != workflow.FINISHED:
         raise ValueError('Controller returned an undeclared phase')
     if not isinstance(accepted, bool):
         raise ValueError('Controller accepted must be a boolean')
     if not accepted and next_phase != phase:
         raise ValueError('Rejected choices must preserve the phase')
-    if args.event == 'init' and next_phase != phase and not workflow.states[next_phase].final:
+    if args.event == 'init' and next_phase != phase and not workflow.is_finished(next_phase):
         raise ValueError('Only an accepted agent callback may advance the phase')
 
 
 def state_owner(workflow, phase, context):
+    if phase == workflow.FINISHED:
+        return None
     owner = workflow.states[phase].owner
     owner = owner(context) if callable(owner) else owner
     return {key: owner[key] for key in ('id', 'name')} if owner else None
@@ -356,6 +358,8 @@ def transition(args, context, controller):
     if result['phase'] == workflow.initial:
         result.setdefault('alternatives', []).append({'instruction': 'Stop this SOP.', 'callback': ['quit']})
     next_phase = result.pop('phase')
+    if next_phase == workflow.FINISHED:
+        result['instruction'] = finished_instruction(controller)
     result.setdefault('accepted', True)
     status = next_phase if result['accepted'] or receipt else before
     result['next_step'] = callback(result.pop('instruction'), result.pop('callback', None))
@@ -367,7 +371,7 @@ def transition(args, context, controller):
     owner = state_owner(workflow, next_phase, context)
     if result['accepted'] and workflow.handoff and owner and owner['id'] != context['agent_id'] and not context.get('handoff'):
         workflow.handoff(args, context, owner)
-    finished = workflow.states[next_phase].final
+    finished = workflow.is_finished(next_phase)
     changed = before != (None if finished else status)
     result.update(ok=invalid is None, status=status, finished=finished,
                   state_changed=changed, error=invalid)
@@ -428,10 +432,20 @@ def agent_decision(output):
     return {key: output[key] for key in ('status', 'instruction', 'next_step', 'error', 'evidence', 'usage') if key in output}
 
 
+# TODO: finish state pending definition. Distinguish re-entry from end-loop
+# completion; delegation cleans SOP state at the ringed-circle for re-entry.
+# Blocked runs do not reach that node. No end-loop mode is defined yet.
+def finished_instruction(controller):
+    return (controller.SOP_NAME + ' SoP finished, directly and silently end this turn. '
+            'Allow re-enter with initial command in SKILL.md next round.')
+
+
 def response(result):
     """Agent guidance for the current issue state."""
     step = result['next_step']
     instruction = step['instruction']
+    if result['status'] == 'FINISHED':
+        return {'status': result['status'], 'instruction': instruction}
     if result['status'] is not None:
         instruction = f'You are in SOP state "{result["status"]}". {instruction}'
     options = []
@@ -465,6 +479,10 @@ def graph_svg(source, identifier):
 
 def state_artifact(context, controller, result):
     """Render the controller's workflow and highlight the current or failed state."""
+    FINISHED = controller.workflow.FINISHED
+    def node(name):
+        return '__end' if name == FINISHED else name
+
     status = result['status']
     recovery = context.get('state', {}).get('recovery', {})
     assertion = recovery.get('assertion', {})
@@ -480,7 +498,7 @@ def state_artifact(context, controller, result):
                           if (owner := state_owner(controller.workflow, name, context)) else '') + '>];' for name in states)
     for branch in controller.workflow.branches.values():
         diagram += f'\n{quote(branch.name)} [shape=diamond, label={quote(branch.description)}];'
-        diagram += '\n' + '\n'.join(f'{quote(branch.name)} -> {quote(target)} [label={quote(label)}];'
+        diagram += '\n' + '\n'.join(f'{quote(branch.name)} -> {quote(node(target))} [label={quote(label)}];'
                                      for label, target in branch.routes.items())
     edges = {(state.name, option.name): option.target for state in states.values()
              if not callable(state.options) for option in state.options}
@@ -494,17 +512,17 @@ def state_artifact(context, controller, result):
                      for name, source in charts.items()
                      if source}
              for state, charts in logic.items()}
-    diagram += '\n' + '\n'.join(f'{quote(source)} -> {quote(target)} [id="option_{index}", label={quote(option)}];'
+    diagram += '\n' + '\n'.join(f'{quote(source)} -> {quote(node(target))} [id="option_{index}", label={quote(option)}];'
                                 for index, ((source, option), target) in enumerate(edges.items()))
-    # Boundary markers are diagram-only; they never introduce workflow options.
+    # Start is diagram-only; FINISHED owns the ringed-circle completion action.
     boundaries = ['__start [shape=point, label="", fillcolor=black, color=black, width=0.05, height=0.05];',
-                  '__end [shape=doublecircle, label="", style=filled, fillcolor=black, color=black, width=0.2, height=0.2, fixedsize=true];',
+                  '__end [id="state_FINISHED", shape=doublecircle, label="", style=filled, fillcolor=black, color=black, width=0.2, height=0.2, fixedsize=true];',
                   f'__start -> {quote(controller.workflow.initial)};']
     boundaries.extend(f'{quote(state.name)} -> __end;' for state in states.values() if state.final)
     diagram += '\n' + '\n'.join(boundaries)
-    if phase in states:
+    if phase in states or phase == FINISHED:
         color = '#fee2e2' if result.get('error') else '#dcfce7'
-        diagram += f'\n{quote(phase)} [fillcolor="{color}", color="#2563eb", penwidth=2];\n'
+        diagram += f'\n{quote(node(phase))} [fillcolor="{color}", color="#2563eb", penwidth=2];\n'
     diagram += '\n}'
     details = {'issue_id': context['issue_id'], 'sop': controller.SOP_NAME, 'status': status}
     if result.get('error'):
@@ -518,6 +536,7 @@ def state_artifact(context, controller, result):
             choices.append(callback('Stop this SOP.', ['quit']))
         nodes[state.name] = response({'status': state.name,
                                      'next_step': {**callback(state.description), 'alternatives': choices}})
+    nodes[FINISHED] = {'status': FINISHED, 'instruction': finished_instruction(controller)}
     if context.get('output'):
         nodes[phase] = agent_decision(context['output'])
     links = {f'option_{index}': {
