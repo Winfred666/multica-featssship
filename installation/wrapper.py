@@ -12,9 +12,9 @@ import shlex
 import shutil
 import subprocess
 import sys
-import uuid
 from types import SimpleNamespace
-from urllib.request import Request, urlopen
+
+from common import write_artifact
 
 
 ROOT = Path(__file__).resolve().parent
@@ -467,29 +467,6 @@ def response(result):
     return agent_decision(output)
 
 
-def upload_artifact(filename, content, *, issue_id):
-    """Publish the named live deliverable on the native issue."""
-    if not all(os.environ.get(key) for key in
-               ('MULTICA_SERVER_URL', 'MULTICA_TOKEN', 'MULTICA_ISSUE_ID', 'MULTICA_WORKSPACE_ID')):
-        return
-    boundary = 'sop-' + uuid.uuid4().hex
-    fields = {'issue_id': issue_id}
-    body = b''.join((f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n').encode()
-                    for key, value in fields.items())
-    body += (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-             'Content-Type: text/html\r\n\r\n').encode() + content.encode() + f'\r\n--{boundary}--\r\n'.encode()
-    request = Request(os.environ['MULTICA_SERVER_URL'].rstrip('/') + '/api/upload-file', data=body, headers={
-        'Authorization': 'Bearer ' + os.environ['MULTICA_TOKEN'],
-        'X-Workspace-ID': os.environ['MULTICA_WORKSPACE_ID'],
-        'Content-Type': 'multipart/form-data; boundary=' + boundary})
-    # A preview failure must never repeat a completed workflow action.
-    try:
-        with urlopen(request, timeout=30) as response:
-            response.read()
-    except Exception as error:
-        print(redact('Live artifact update failed: ' + str(error)), file=sys.stderr)
-
-
 def graph_svg(source, identifier):
     dot = ensure_command('dot', 'graphviz')
     result = subprocess.run([dot, '-Tsvg', '-Gid=' + identifier,
@@ -606,21 +583,23 @@ def state_artifact(context, controller, result):
 
 
 def publish_artifacts(context, controller, result):
-    if not controller or not all(os.environ.get(key) for key in
-            ('MULTICA_SERVER_URL', 'MULTICA_TOKEN', 'MULTICA_ISSUE_ID', 'MULTICA_WORKSPACE_ID')):
+    if not controller:
         return
     shifted = result.get('state_changed') or result.get('finished')
     if not (shifted or result.get('error') or
             result.get('accepted') and context['argv'] and context['argv'][0] != 'init'):
         return
     try:
+        artifacts = {}
         # In DEBUG mode, update the controller workflow's state chart artifact on every state shift.
         if controller.DEBUG and shifted:
-            upload_artifact(controller.SOP_NAME + '-state.html', state_artifact(context, controller, result),
-                            issue_id=context['issue_id'])
+            artifacts[controller.SOP_NAME + '-state.html'] = state_artifact(context, controller, result)
         if not result.get('error') and hasattr(controller, 'artifacts'):
-            for filename, content in controller.artifacts({**context, 'cli': multica, 'error': SOPError}).items():
-                upload_artifact(filename, content, issue_id=context['issue_id'])
+            artifacts.update(controller.artifacts({**context, 'cli': multica, 'error': SOPError}))
+        parent = getattr(context.get('args'), 'thread', None) or context.get('state', {}).get('reply_parent')
+        # FUTURE TODO: temp bypass agent as middel-layer, would be elegant when treat SoP sys as first class member role to speak in an issue
+        for filename, content in artifacts.items():
+            write_artifact({'issue_id': context['issue_id'], 'filename': filename}, content, parent)
     except Exception as error:
         print(redact('Live artifact update failed: ' + str(error)), file=sys.stderr)
 
