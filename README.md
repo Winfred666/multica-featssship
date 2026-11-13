@@ -26,8 +26,25 @@ python3 /path/to/multica-featssship/installation/install.py
 
 Follow the returned editing and confirmation guidance. On a comment trigger,
 pass `--thread <trigger UUID>`. Keep the source checkout during installation.
-Interrupted installation resumes its existing MAIN without creating a duplicate.
+Installation retains its existing MAIN checkpoint after completion and on retries.
 Do not search for or ask the human to create a separate MAIN issue.
+
+### Update
+
+In the same installation issue, fast-forward the featssship source checkout,
+then run from the **target repository checkout**:
+
+```bash
+git -C /path/to/multica-featssship pull --ff-only
+python3 /path/to/multica-featssship/installation/install.py update
+```
+
+The retained `finished` state offers only `update` and returns there afterward.
+Update retrieves the saved MAIN and refreshes its local delegation bundle and
+installation-managed entry/context references. It preserves settings, MAIN identity
+and delegation progress; it does not rebind platform skills or change existing
+dev-rev issues or their local packages. A standalone installer must be rebuilt
+from the latest source before running its `wrapper.py update`.
 
 ## Shipping overview
 

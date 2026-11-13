@@ -112,21 +112,39 @@ def execute(config, issue, state, save_state):
         cli('issue', 'update', issue['id'], '--project', state['project_id'], '--no-start')
         issue['project_id'] = state['project_id']
     root = main_root(config, issue, state, save_state)
-    link_config(root['id'], config_ref(issue))
+    developer = agent(config, 'developer', issue, state)
+    reviewer = agent(config, 'reviewer', issue, state)
+    if developer == reviewer or root['assignee_id'] in (developer, reviewer):
+        raise ValueError('Select distinct MAIN, Developer and Reviewer agents so MAIN only dispatches and receives.')
+    command = deploy(config, issue, root)
+    return {'root_issue_id': root['id'], 'developer_id': developer, 'reviewer_id': reviewer,
+            'command': command, 'inputs': '--thread REQUEST_UUID --config <batch-issues-JSON>'}
+
+
+def update(config, issue, state):
+    main_id = state.get('main_issue_id')
+    if not main_id:
+        raise ValueError('The installation checkpoint has no MAIN issue ID; do not create another MAIN.')
+    root = cli('issue', 'get', main_id)
+    deploy(config, issue, root, include_feature=False)
+
+
+def deploy(config, issue, root, *, include_feature=True):
+    repo = repo_root()
+    check_repo(repo, config)
     project = cli('project', 'get', issue['project_id'])
     if root['workspace_id'] != issue['workspace_id'] or root['project_id'] != issue['project_id'] or project['workspace_id'] != issue['workspace_id']:
         raise ValueError('The selected root and project must belong to the target workspace/project.')
     if root.get('assignee_type') != 'agent':
         raise ValueError('The MAIN root must be assigned to a MAIN agent.')
-    developer = agent(config, 'developer', issue, state)
-    reviewer = agent(config, 'reviewer', issue, state)
-    if developer == reviewer or root['assignee_id'] in (developer, reviewer):
-        raise ValueError('Select distinct MAIN, Developer and Reviewer agents so MAIN only dispatches and receives.')
+    link_config(root['id'], config_ref(issue))
     exclude_local(repo)
     local = repo / '.multica' / 'featssship' / 'packages'
-    feature_package = build('feature', local / 'multica-featssship-develop-review')
     name = 'multica-featssship-' + issue['project_id'][:8]
-    root_package = build('delegation', local / name, name=name)
+    packages = [build('delegation', local / name, name=name)]
+    # Existing dev-rev entry paths may be pinned by in-flight issues.
+    if include_feature:
+        packages.append(build('feature', local / 'multica-featssship-develop-review'))
     # Remove only the old installer's owned block, preserving project context.
     project_text = re.sub(re.escape(START) + r'.*?' + re.escape(END), '', project.get('description') or '', flags=re.S)
     init_text = 'Repository: ' + config['repository'] + '\n\n' + '\n'.join(
@@ -140,7 +158,7 @@ def execute(config, issue, state, save_state):
     title = 'MAIN DEV: ' + re.sub(r'^(?:MAIN DEV:\s*)+', '', root['title'])
     cli('issue', 'update', root['id'], '--title', title, '--description-stdin', '--no-start', input=root_text)
     destination = repo / '.agents' / 'skills'
-    for package in (feature_package, root_package):
+    for package in packages:
         target = destination / package.name
         ignored = ['.state', '__pycache__', '.errors']
         if (target / 'config.json').exists():
@@ -150,9 +168,7 @@ def execute(config, issue, state, save_state):
         (target / 'installation.json').unlink(missing_ok=True)
         for obsolete in (target / 'roles').glob('*-debug.md'):
             obsolete.unlink()
-    command = shlex.join(['python3', str(destination / name / 'wrapper.py')])
-    return {'root_issue_id': root['id'], 'developer_id': developer, 'reviewer_id': reviewer,
-            'command': command, 'inputs': '--thread REQUEST_UUID --config <batch-issues-JSON>'}
+    return shlex.join(['python3', str(destination / name / 'wrapper.py')])
 
 
 if __name__ == '__main__':

@@ -2,11 +2,11 @@
 import json
 
 from common import WAIT_OUTER, attachment, cli, config_ref, link_config, merge_patch, read_config, write_config
-from sop import FINISHED, Option, Parameter, State, Workflow
+from sop import Option, Parameter, State, Workflow
 
 CACHE_VIEW = False
 
-from install import defaults, execute
+from install import defaults, execute, update
 
 # TODO: Breaks the agent-as-middle-layer principle: the script cannot proactively
 # take over human interaction or end the turn, so it must ask the agent to exit.
@@ -17,7 +17,7 @@ COMMENTS = ('Defaults: repository is the target Git URL, not the featssship sour
             'Each directions entry owns name, scope (paths), Reviewer questions (string list), test_command and branch_prefix; '
             'replace the list to set all concurrent directions. Missing acceptance questions/test_command must be filled from context. '
             'Roles default to distinct new agents using the installer runtime/model; set role.id to reuse one. '
-            'Blank model inherits the runtime default. A new cycle creates an independent MAIN; unfinished retries use its saved ID. CEO is subscribed. '
+            'Blank model inherits the runtime default. Installation creates one independent MAIN; retries and updates use its saved ID. CEO is subscribed. '
             'manual defaults to false; true requires superior approval after automated review and permits a remote feature branch. '
             'installed_* agent IDs are reusable settings in the master attachment. '
             'Use a JSON merge patch: objects merge, arrays replace, null removes a field.')
@@ -70,7 +70,7 @@ def edit(args, context):
 def confirmed(args, context):
     """```dot
     digraph confirmed { node [shape=box]; check [label="Require human confirmation of latest config"];
-        install [label="Validate; resume this cycle or create another MAIN; set up roles and local skills"];
+        install [label="Validate; create/reuse MAIN; set up roles and local skills"];
         inject [label="Link MAIN to the master attachment; remove legacy description block"];
         finish [label="Mark installer done"];
         check -> install -> inject -> finish; }
@@ -94,11 +94,25 @@ def confirmed(args, context):
     cli('issue', 'status', context['issue_id'], 'done')
 
 
+def refresh(args, context):
+    """```dot
+    digraph update { node [shape=box]; main [label="Retrieve saved MAIN; keep identity and delegation progress"];
+        deploy [label="Refresh local delegation and owned context only"];
+        main -> deploy; }
+    ```"""
+    update(context['config'], context['issue'], context['state'])
+
+
 workflow = Workflow(
     State('grilling', PROMPT, initial=True, precheck=observed, view=view, options=(
         Option('edit', 'grilling', 'Update only the settings that need changing.', edit,
                params=(Parameter('--patch', 'JSON merge patch for the settings to change'),)),
-        Option('confirmed', FINISHED, 'After the human replies confirm, run confirmed to install.', confirmed),
+        Option('confirmed', 'finished', 'After the human replies confirm, run confirmed to install.', confirmed),
+    )),
+    State('finished', 'Installation retained for the existing MAIN. On an update request, use the latest featssship '
+          'source checkout or rebuilt installer and run update from the target repository. Otherwise, end this turn.',
+          precheck=observed, options=(
+        Option('update', 'finished', 'Refresh the saved MAIN’s local delegation and installation-managed context; keep in-flight dev-rev copies.', refresh),
     )),
     params=(Parameter('--thread', 'Agent-only: native trigger comment (optional); confirmation is found automatically', required=False),),
 )

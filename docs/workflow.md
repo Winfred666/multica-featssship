@@ -6,9 +6,10 @@ Installation has two states:
 digraph installation {
   rankdir=LR; node [shape=box];
   grilling [label="grilling: align config with the requested workflow"];
-  finished [label="finished: MAIN linked to master; installer done"];
+  finished [label="finished: retain MAIN checkpoint; update only"];
   grilling -> grilling [label="edit JSON merge patch; attach config; ask edit or confirm; end this turn silently if not outer-confirmed"];
   grilling -> finished [label="confirmed by human: set up roles/local skills and create/reuse MAIN"];
+  finished -> finished [label="update: refresh saved MAIN's local delegation and owned context"];
 }
 ```
 
@@ -21,8 +22,11 @@ script finds that reply automatically. The JSON role key is `delegator`. The ins
 attachment containing installation settings and defaults. MAIN receives only
 its explicit owner/filename reference in `featssship.config`, not copied defaults
 or an installer-parent link. It subscribes CEO and runs independently after the
-installer finishes. Re-entry preserves settings and starts another MAIN;
-unfinished cycles retain their immediate MAIN checkpoint for retries.
+installer reaches retained ordinary state `finished`, whose sole option is `update`.
+Re-entry preserves settings and MAIN identity; its immediate MAIN checkpoint remains
+for retries and updates. [Update commands](../README.md#update) use the latest
+source without changing delegation progress, platform skill bindings or existing
+dev-rev issues and their local packages.
 Skills deploy to the target repository's `.agents/skills/`; installation does not
 publish platform skills or change agent skill assignments.
 Dispatch and handoff prompts name that local wrapper's absolute path. Both roles
