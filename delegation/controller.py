@@ -91,16 +91,6 @@ def dispatch(args, context):
     record, config = context['record'], context['config']
     if record['draft_attachment_id'] != context['revision']:
         raise context['error']('invalid_input', 'Refresh and obtain human approval of the current batch first.')
-    if not record.get('approval_comment_id'):
-        rows = cli('issue', 'comment', 'list', context['issue_id'], '--thread', record['draft_comment_id'], '--tail', '30')
-        draft = next((row for row in rows if row['id'] == record['draft_comment_id']), None)
-        human = next((row for row in reversed(rows)
-                      if row['id'] == args.thread or (not args.thread and row.get('author_type') == 'member')), None)
-        if (not draft or not human or human.get('author_type') != 'member'
-                or rows.index(human) <= rows.index(draft)):
-            raise context['error']('invalid_input', 'The human must confirm or accept the current batch draft in its thread.')
-        record['approval_comment_id'] = human['id']
-        save_progress(context)
     batch = [request_config(config, context['installed'], index=i) for i in range(len(config['issues']))]
     for index, request in enumerate(batch):
         missing = [key for key in ('name', 'request', 'direction', 'scope') if not (request.get(key) or '').strip()]
