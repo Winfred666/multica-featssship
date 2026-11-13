@@ -34,10 +34,10 @@ Use the [RSI creator](https://github.com/Winfred666/multica-RSI/blob/main/harnes
 for generic runtime protocol and renderer checks, not another copy here.
 
 Create MAIN without a parent, save its ID for same-cycle retries and subscribe CEO.
-Preserve existing MAIN issues. Bind skills additively. The installer-owned
-`featssship-config.json` is the settings source: no local answers, cached config
-or binding JSON. MAIN links the master, then derives a delegation containing only request overrides.
-Dev-rev reads that document and resolves universal settings from its master reference. Keep reusable installed agent/skill IDs
+Preserve existing MAIN issues. Deploy skills only to the target repository. The installer-owned
+`featssship-config.json` is the settings source: no local answers or cached config.
+MAIN links the master, then derives a delegation containing only request overrides.
+Dev-rev reads that document and resolves universal settings from its master reference. Keep reusable agent IDs
 in the master and execution checkpoints in metadata. Resolve settings through
 owner/filename references, never installation-parent ancestry. Do not add nested-issue hierarchy
 or rubric-style tests; keep verification focused on functional shipping behavior. Project context may include

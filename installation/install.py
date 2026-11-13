@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 from common import check_repo, cli, config_ref, exclude_local, feature_branch, link_config, repo_root, write_config
-from packages import bind, build, install
+from packages import build
 
 START, END = '<!-- featssship:installation -->', '<!-- /featssship:installation -->'
 
@@ -67,9 +67,9 @@ def agent(config, role, issue, state):
     selected = config.get(key) or config.get(role, {}).get('id')
     if not selected:
         settings = config[role]
-        instructions = {'delegator': 'Only draft and delegate features with the installed featssship skill, then receive results.',
-                        'developer': 'Own only development: implement, test, correct and submit with the installed featssship skill.',
-                        'reviewer': 'Review the submitted revision, then own approval, scripted integration, push and completion with the installed featssship skill; return source corrections to Developer.'}
+        instructions = {'delegator': 'Only draft and delegate features with the repository-local featssship skill, then receive results.',
+                        'developer': 'Own only development: implement, test, correct and submit with the repository-local featssship skill.',
+                        'reviewer': 'Review the submitted revision, then own approval, scripted integration, push and completion with the repository-local featssship skill; return source corrections to Developer.'}
         words = ['agent', 'create', '--name', settings['name'], '--runtime-id', settings['runtime_id'],
                  '--model', settings['model'], '--instructions', instructions[role]]
         if settings.get('thinking_level'):
@@ -125,15 +125,8 @@ def execute(config, issue, state, save_state):
     exclude_local(repo)
     local = repo / '.multica' / 'featssship' / 'packages'
     feature_package = build('feature', local / 'multica-featssship-develop-review')
-    config['installed_feature_skill_id'] = install(feature_package, config.get('installed_feature_skill_id'))
-    write_config(config_ref(issue), config, state.get('reply_parent'))
-    for identity in (developer, reviewer):
-        bind(identity, config['installed_feature_skill_id'])
     name = 'multica-featssship-' + issue['project_id'][:8]
     root_package = build('delegation', local / name, name=name)
-    config['installed_delegation_skill_id'] = install(root_package, config.get('installed_delegation_skill_id'))
-    write_config(config_ref(issue), config, state.get('reply_parent'))
-    bind(root['assignee_id'], config['installed_delegation_skill_id'])
     # Remove only the old installer's owned block, preserving project context.
     project_text = re.sub(re.escape(START) + r'.*?' + re.escape(END), '', project.get('description') or '', flags=re.S)
     init_text = 'Repository: ' + config['repository'] + '\n\n' + '\n'.join(

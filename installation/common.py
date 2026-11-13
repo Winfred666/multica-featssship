@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import tempfile
 
@@ -211,4 +212,5 @@ def has_manual(issue):
 
 
 def entry_command(name):
-    return f'Run `python3 <installed {name} skill directory>/wrapper.py` from the target repository root.'
+    command = shlex.join(['python3', str(Path(__file__).resolve().parent.parent / name / 'wrapper.py')])
+    return f'Run `{command}` from the prepared issue worktree.'

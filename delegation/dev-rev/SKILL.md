@@ -10,7 +10,8 @@ Read the issue's request, scope and shared delegation questions, plus verificati
 guidance in the project description. Use the prepared issue worktree and MAIN-selected
 branch without creating another checkout or switching branches.
 
-From the target repository root, run `python3 <this-skill-directory>/wrapper.py`.
+From the target repository root, run the repository-local wrapper path supplied in
+the issue or handoff, not an agent-installed skill.
 Pass `--thread <trigger UUID>` on comment-triggered calls and follow the returned callback.
 
 Do not ask parent to arrange or authorize ordinary workflow transitions.

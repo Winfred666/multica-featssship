@@ -19,7 +19,7 @@ COMMENTS = ('Defaults: repository is the target Git URL, not the featssship sour
             'Roles default to distinct new agents using the installer runtime/model; set role.id to reuse one. '
             'Blank model inherits the runtime default. A new cycle creates an independent MAIN; unfinished retries use its saved ID. CEO is subscribed. '
             'manual defaults to false; true requires superior approval after automated review and permits a remote feature branch. '
-            'installed_* agent and skill IDs are reusable settings in the master attachment. '
+            'installed_* agent IDs are reusable settings in the master attachment. '
             'Use a JSON merge patch: objects merge, arrays replace, null removes a field.')
 
 
@@ -70,7 +70,7 @@ def edit(args, context):
 def confirmed(args, context):
     """```dot
     digraph confirmed { node [shape=box]; check [label="Require human confirmation of latest config"];
-        install [label="Validate; resume this cycle or create another MAIN; install roles/skills"];
+        install [label="Validate; resume this cycle or create another MAIN; set up roles and local skills"];
         inject [label="Link MAIN to the master attachment; remove legacy description block"];
         finish [label="Mark installer done"];
         check -> install -> inject -> finish; }

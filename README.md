@@ -13,7 +13,7 @@ Requires Python 3.11+, Git and authenticated `multica`.
    It asks one self-contained question only when something is uncertain.
 3. Download and review the attached JSON. Reply with changes or `confirm`.
 4. After confirmation, installation creates an independent `MAIN DEV:` issue, sets up the
-   agents and skills, and subscribes CEO.
+   agents, deploys repository-local skills to `.agents/skills/`, and subscribes CEO.
 
 ### Installer agent
 
