@@ -14,6 +14,12 @@ From the target repository root, run the repository-local wrapper path supplied 
 the issue or handoff, not an agent-installed skill.
 Pass `--thread <trigger UUID>` on comment-triggered calls and follow the returned callback.
 
+Keep one feature commit; amend corrections, never create merge commits. Reviewer
+rebases onto latest main before integration. A changed revision needs a fresh
+submission, review and any required outer approval. On REBASE CONFLICT, Developer
+resolves and stages in the retained worktree, runs `git rebase --continue`, and
+submits again.
+
 Do not ask parent to arrange or authorize ordinary workflow transitions.
 
 Posting comment to sibling or other outer issue must SEND extremely small and brief notices to original thread in MAIN issue for later audit. Never mention MAIN delegator in current sub-issue.
