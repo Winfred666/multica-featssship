@@ -76,7 +76,7 @@ class WorkflowFixture(unittest.TestCase):
         db = {'workspace_id': self.ids['workspace'], 'calls': [], 'agents': {
             self.ids['main']: {'id': self.ids['main'], 'runtime_id': self.ids['runtime'], 'workspace_id': self.ids['workspace'],
                                'model': 'fixture', 'thinking_level': 'high'}},
-            'skills': {}, 'bindings': {}, 'projects': {self.ids['project']: {'id': self.ids['project'],
+            'projects': {self.ids['project']: {'id': self.ids['project'],
             'workspace_id': self.ids['workspace'], 'description': 'Existing project context.'}},
             'issues': {}, 'comments': [],
             'github_calls': [], 'github': {'url': 'https://github.com/owner/requests/issues/42',
@@ -159,11 +159,10 @@ class WorkflowFixture(unittest.TestCase):
         self.ids['root'] = root['id']
         self.ids['project'] = root['project_id']
         self.config = {**audit, 'root_issue_id': root['id'],
-                       **{key: audit['installed_' + key] for key in ('delegator_id', 'developer_id', 'reviewer_id', 'feature_skill_id', 'delegation_skill_id')}}
+                       **{key: audit['installed_' + key] for key in ('delegator_id', 'developer_id', 'reviewer_id')}}
         self.root_package = self.repo / '.agents/skills' / ('multica-featssship-' + self.ids['project'][:8])
         self.developer = self.repo / '.agents/skills/multica-featssship-develop-review'
-        from packages import build
-        self.reviewer = build('feature', self.base / 'reviewer-skill')
+        self.reviewer = self.developer
         return self.config
 
     def invoke(self, package, *args, role='developer', issue=None, task=None, trigger=None, ok=True, plain=False):
@@ -309,19 +308,16 @@ class WorkflowFixture(unittest.TestCase):
         self.dispatch()
         self.assertEqual(self.invoke(self.developer)['status'], 'develop')
 
-    def test_two_agent_correction_merge_and_minimal_binding(self):
+    def test_two_agent_correction_merge(self):
         self.install()
         for package in (self.root_package, self.developer, self.reviewer):
             self.assertIs(json.loads((package / 'config.json').read_text())['DEBUG'], True)
-        self.assertEqual(len(self.db()['skills']), 2)
         audit = self.read_answers()
         audit['directions'][0]['test_command'] = 'false'
         self.write_answers(audit)
         self.dispatch()
         self.assertEqual(self.binding['branch'], 'feat/messages/ship-message')
         self.assertEqual(self.call('git', 'ls-remote', '--heads', 'origin', self.binding['branch']).stdout, '')
-        for role in ('developer', 'reviewer'):
-            self.assertIn(self.config['feature_skill_id'], self.db()['bindings'][self.config[role + '_id']])
         initial = self.invoke(self.developer)
         self.assertEqual(initial['status'], 'develop')
         self.assertEqual(len(initial['next_step']), 3)  # submit, cancel and quit; no prepare.
@@ -455,7 +451,6 @@ class WorkflowFixture(unittest.TestCase):
         self.assertNotEqual(main['id'], self.ids['main'])
         self.assertEqual((main['runtime_id'], main['model'], main['thinking_level']),
                          (self.ids['runtime'], 'fixture', 'high'))
-        self.assertIn(self.config['delegation_skill_id'], self.db()['bindings'][main['id']])
         before = self.db()
         saved = self.read_answers()
         # Reopen outside the SOP: saved completion, not issue status alone, starts a cycle.
@@ -485,7 +480,6 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(self.installer('confirmed')['status'], 'finished')
         self.assertEqual(set(self.db()['issues']), set(pending['issues']))
         self.assertEqual(set(self.db()['agents']), set(before['agents']))
-        self.assertEqual(set(self.db()['skills']), set(before['skills']))
         self.assertEqual(self.read_answers(), saved)
         self.assertEqual(self.db()['issues'][child['id']], before['issues'][child['id']])
         self.assertEqual(config_ref(self.db()['issues'][second]), config_ref(child))
@@ -536,19 +530,6 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(self.binding['source'], config_ref(self.db()['issues'][self.ids['installer']]))
         self.assertEqual(config_ref(self.db()['issues'][self.feature_id], DELEGATION_KEY),
                          config_ref(self.db()['issues'][self.ids['root']], DELEGATION_KEY))
-
-    def test_install_preserves_unrelated_main_skill(self):
-        config = self.read_answers(); config['delegator']['id'] = self.ids['main']
-        self.write_answers(config)
-        db = self.db()
-        skill_id = str(uuid.uuid4())
-        db['skills'][skill_id] = {'id': skill_id, 'name': 'existing-main-skill', 'files': {}}
-        db['bindings'][self.ids['main']] = [skill_id]
-        self.db_path.write_text(json.dumps(db))
-        self.install()
-        self.assertIn(skill_id, self.db()['bindings'][self.ids['main']])
-        self.assertEqual(self.db()['skills'][skill_id], db['skills'][skill_id])
-        self.assertEqual(len(self.db()['skills']), 3)
 
     def test_grilling_and_cross_task_dispatch_recovery(self):
         self.install()

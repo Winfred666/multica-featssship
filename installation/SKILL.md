@@ -20,8 +20,8 @@ human to edit or confirm. Download/read the newest attachment to inspect it. Dir
 or UUID is needed. The agent then runs confirmed, which finds the reply automatically.
 Installation creates MAIN without a parent, subscribes CEO, and links MAIN
 to that same master document.
-The installer finishes while MAIN continues independently. Settings and reusable installed agent/skill IDs stay in the master attachment. The active SoP
+The installer finishes while MAIN continues independently. Settings and reusable agent IDs stay in the master attachment. Skills deploy only to the target repository's `.agents/skills/`. The active SoP
 record saves the active MAIN ID immediately after creation for retry resumption;
-no local answers, cached settings or binding JSON exists.
+no local answers or cached settings exist.
 There is no legacy metadata fallback or automatic configuration merger.
 Follow returned errors; reconcile external writes before retrying.

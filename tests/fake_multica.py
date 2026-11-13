@@ -2,10 +2,8 @@
 import json
 import os
 from pathlib import Path
-import re
 import sys
 import uuid
-import zipfile
 
 
 def main():
@@ -30,23 +28,6 @@ def main():
                   'workspace_id': db['workspace_id'], 'instructions': option('instructions'),
                   'model': option('model', ''), 'thinking_level': option('thinking-level', '')}
         db['agents'][result['id']] = result
-    elif args[:3] == ['agent', 'skills', 'list']:
-        result = [{'id': key, 'name': db['skills'][key]['name']} for key in db['bindings'].get(args[3], [])]
-    elif args[:3] == ['agent', 'skills', 'add']:
-        bound = db['bindings'].setdefault(args[3], [])
-        if option('skill-ids') not in bound:
-            bound.append(option('skill-ids'))
-        result = {'ok': True}
-    elif args[:2] == ['skill', 'import']:
-        with zipfile.ZipFile(option('file')) as archive:
-            files = {name: archive.read(name).decode() for name in archive.namelist()}
-        name = re.search(r'^name: (.+)$', files['SKILL.md'], re.M)[1]
-        existing = next((s for s in db['skills'].values() if s['name'] == name), None)
-        if existing and option('on-conflict') != 'overwrite':
-            raise ValueError('Skill name already exists')
-        skill = {'id': existing['id'] if existing else new(), 'name': name, 'files': files}
-        db['skills'][skill['id']] = skill
-        result = {'status': 'updated' if existing else 'created', 'skill': {'id': skill['id']}}
     elif args[:2] == ['project', 'create']:
         result = {'id': new(), 'workspace_id': db['workspace_id'], 'title': option('title'), 'description': '', 'repository': option('repo')}
         db['projects'][result['id']] = result

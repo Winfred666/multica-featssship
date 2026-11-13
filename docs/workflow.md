@@ -8,14 +8,14 @@ digraph installation {
   grilling [label="grilling: align config with the requested workflow"];
   finished [label="finished: MAIN linked to master; installer done"];
   grilling -> grilling [label="edit JSON merge patch; attach config; ask edit or confirm; end this turn silently if not outer-confirmed"];
-  grilling -> finished [label="confirmed by human: install roles/skills and create/reuse MAIN"];
+  grilling -> finished [label="confirmed by human: set up roles/local skills and create/reuse MAIN"];
 }
 ```
 
 Defaults and field comments guide each edit toward the requested workflow. Keep
 settings that already fit, and edit again as needed. Ask one human question only
 when context leaves something unclear. Editing does not create
-roles, skills or MAIN. Confirmation must be a human reply after the latest config
+roles, local skills or MAIN. Confirmation must be a human reply after the latest config
 comment. The human only replies `confirm`; the agent runs `confirmed` and the
 script finds that reply automatically. The JSON role key is `delegator`. The installer owns one logical master JSON
 attachment containing installation settings and defaults. MAIN receives only
@@ -23,6 +23,10 @@ its explicit owner/filename reference in `featssship.config`, not copied default
 or an installer-parent link. It subscribes CEO and runs independently after the
 installer finishes. Re-entry preserves settings and starts another MAIN;
 unfinished cycles retain their immediate MAIN checkpoint for retries.
+Skills deploy to the target repository's `.agents/skills/`; installation does not
+publish platform skills or change agent skill assignments.
+Dispatch and handoff prompts name that local wrapper's absolute path. Both roles
+run it from the prepared issue worktree, without agent-installed skills.
 
 Attachment revisions temporarily replace unavailable native mutable deliverables.
 `common.py` isolates upload and authenticated download/read, with TODOs for native

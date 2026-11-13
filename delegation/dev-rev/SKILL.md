@@ -4,7 +4,7 @@ description: Developer implements and tests; Reviewer owns review, approved inte
 ---
 
 Use the prepared feature worktree named in the issue and MAIN's configured branch. Read its
-request, scope and shared delegation questions, plus verification guidance in the project description. Run `python3 <this-skill-directory>/wrapper.py`.
+request, scope and shared delegation questions, plus verification guidance in the project description. Run the repository-local wrapper path in the issue or handoff, not an agent-installed skill.
 Pass `--thread <trigger UUID>` on comment-triggered calls.
 Start directly in `develop` on the issue's existing branch selected by MAIN.
 Neither role names, creates, renames or switches branches, or makes another checkout.
