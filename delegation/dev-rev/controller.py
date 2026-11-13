@@ -10,8 +10,8 @@ from sop import Branch, Completed, Option, Parameter, State, Workflow
 CACHE_VIEW = False
 FINAL_DONE = 'directly and silently end this turn'
 
-REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared folder and branch. '
-                 'Review without source edits or tests; after approval, own scripted integration, push and completion. '
+REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared folder and branch '
+                 'without source edits or tests. '
                  'Answer the selected review questions in --finding. Approve or return corrections.')
 
 # TODO: break agent-as-middle-layer: the runtime should stop until superior input directly.
@@ -30,8 +30,7 @@ def handoff(args, context, owner):
 
 
 def review_view(context):
-    request = context['issue']['description'].rsplit('\n\n' + entry_command('multica-featssship-develop-review'), 1)[0]
-    return {'instruction': REVIEW_PROMPT + '\n\nIssue criteria (read-only reference):\n' + request +
+    return {'instruction': REVIEW_PROMPT +
             '\n\nReview questions:\n' + '\n'.join('- ' + q for q in context['binding']['questions'])}
 
 
