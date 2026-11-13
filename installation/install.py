@@ -92,7 +92,7 @@ def main_root(config, issue, state, save_state):
         agent(config, 'delegator', issue, state)
     else:
         main = agent(config, 'delegator', issue, state)
-        root = cli('issue', 'create', '--title', 'MAIN DEV: Ship features for ' + config['repository'],
+        root = cli('issue', 'create', '--title', 'MAIN DEV: ' + config['repository'].rstrip('/').rsplit('/', 1)[-1].removesuffix('.git') + ' feature ship',
                    '--description-stdin', '--project', issue['project_id'], '--allow-duplicate',
                    '--assignee-id', main, '--status', 'backlog',
                    input='MAIN delegates features and receives verified results.')
