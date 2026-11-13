@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """README installer: edit one config, then install after human confirmation."""
-from pathlib import Path
 import re
 import shlex
 import shutil
-import subprocess
-import sys
 
-from common import check_repo, cli, config_ref, exclude_local, feature_branch, link_config, repo_root, write_config
-from packages import build
+from featssship import check_repo, cli, config_ref, exclude_local, feature_branch, link_config, repo_root, write_config
+from packages import ENGINE_FILES, build
 
 START, END = '<!-- featssship:installation -->', '<!-- /featssship:installation -->'
 
@@ -154,7 +151,7 @@ def deploy(config, issue, root, *, include_feature=True):
         cli('project', 'update', project['id'], '--description', project_text)
     root_text = section(root.get('description'),
                         'MAIN drafts and delegates features. '
-                        'Developer implements and tests; Reviewer owns review, approved integration and completion.\n\nRun `' + shlex.join(['python3', str(repo / '.agents/skills' / name / 'wrapper.py')]) + '` from the target repository root.')
+                        'Developer implements and tests; Reviewer owns review, approved integration and completion.\n\nRun `' + shlex.join(['multica', 'sop', 'run', name]) + '` from the target repository root.')
     title = 'MAIN DEV: ' + re.sub(r'^(?:MAIN DEV:\s*)+', '', root['title'])
     cli('issue', 'update', root['id'], '--title', title, '--description-stdin', '--no-start', input=root_text)
     destination = repo / '.agents' / 'skills'
@@ -164,12 +161,10 @@ def deploy(config, issue, root, *, include_feature=True):
         if (target / 'config.json').exists():
             ignored.append('config.json')
         shutil.copytree(package, target, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*ignored))
+        for filename in ENGINE_FILES:
+            (target / filename).unlink(missing_ok=True)
         (target / 'DEBUG.md').unlink(missing_ok=True)
         (target / 'installation.json').unlink(missing_ok=True)
         for obsolete in (target / 'roles').glob('*-debug.md'):
             obsolete.unlink()
-    return shlex.join(['python3', str(destination / name / 'wrapper.py')])
-
-
-if __name__ == '__main__':
-    raise SystemExit(subprocess.call([sys.executable, str(Path(__file__).with_name('wrapper.py')), *sys.argv[1:]]))
+    return shlex.join(['multica', 'sop', 'run', name])

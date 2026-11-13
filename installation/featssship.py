@@ -212,5 +212,5 @@ def has_manual(issue):
 
 
 def entry_command(name):
-    command = shlex.join(['python3', str(Path(__file__).resolve().parent.parent / name / 'wrapper.py')])
+    command = shlex.join(['multica', 'sop', 'run', name])
     return f'Run `{command}` from the prepared issue worktree.'

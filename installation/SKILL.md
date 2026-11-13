@@ -1,11 +1,12 @@
 ---
 name: multica-featssship-installation
 description: Install after human confirmation; retain the existing MAIN for repo-local updates.
+metadata: {sop: symbolic}
 ---
 
 Use only on the assigned installation issue. From the target repository root,
-run `python3 <this-skill-directory>/wrapper.py`. The README also documents
-`installation/install.py`. Keep the source or standalone package for updates.
+run `multica sop run multica-featssship-installation`. See the README for source
+discovery. Keep the source or standalone package for updates.
 Entry reads the installer-owned `featssship-config.json` through its metadata
 reference. It creates defaults only when the document is absent. Installation
 retains ordinary state `finished` with only `update`; re-entry never starts another
@@ -25,9 +26,9 @@ record saves the active MAIN ID immediately after creation for retries and updat
 no local answers or cached settings exist.
 
 For an update request, run `git -C /path/to/multica-featssship pull --ff-only`,
-then `python3 /path/to/multica-featssship/installation/install.py update` from the
+then `MULTICA_SOP_SKILL_ROOTS=/path/to/multica-featssship multica sop run multica-featssship-installation update` from the
 target repository in this installation issue. Rebuild a standalone installer from
-the latest source before using its `wrapper.py update`. Update refreshes only
+the latest source before using `multica sop run multica-featssship-installation update`. Update refreshes only
 the saved MAIN's delegation bundle and installation-owned entry/context references,
 then returns to `finished`. Preserve configuration, MAIN identity and delegation
 progress. Do not rebind platform skills or update existing dev-rev issues/packages.

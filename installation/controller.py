@@ -1,7 +1,7 @@
 """Two-stage installation: edit on the installer, publish a shared master configuration."""
 import json
 
-from common import WAIT_OUTER, attachment, cli, config_ref, link_config, merge_patch, read_config, write_config
+from featssship import WAIT_OUTER, attachment, cli, config_ref, link_config, merge_patch, read_config, write_config
 from sop import Option, Parameter, State, Workflow
 
 CACHE_VIEW = False

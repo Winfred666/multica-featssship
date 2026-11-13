@@ -1,17 +1,18 @@
 ---
 name: multica-featssship-develop-review
 description: Developer implements and tests; Reviewer owns review, approved integration and completion.
+metadata: {sop: symbolic}
 ---
 
 Use this skill for delegated development and review. Developer implements and verifies;
-Reviewer reviews and ships through the wrapper callbacks.
+Reviewer reviews and ships through the CLI callbacks.
 
 Read the issue's request, scope and shared delegation questions, plus verification
 guidance in the project description. Use the prepared issue worktree and MAIN-selected
 branch without creating another checkout or switching branches.
 
-From the target repository root, run the repository-local wrapper path supplied in
-the issue or handoff, not an agent-installed skill.
+From the target repository root, run `multica sop run multica-featssship-develop-review`.
+The CLI discovers the repository-local skill.
 Pass `--thread <trigger UUID>` on comment-triggered calls and follow the returned callback.
 
 Keep one feature commit; amend corrections, never create merge commits. Reviewer

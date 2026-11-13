@@ -10,8 +10,9 @@ from unittest.mock import patch
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
+MULTICA = shutil.which('multica')
 sys.path.insert(0, str(ROOT / 'installation'))
-from common import CONFIG_KEY, DELEGATION_KEY, DISPATCH_KEY, comment, config_ref, feature_branch, request_config
+from featssship import CONFIG_KEY, DELEGATION_KEY, DISPATCH_KEY, comment, config_ref, feature_branch, request_config
 
 
 class DeliveryRoutingTests(unittest.TestCase):
@@ -19,7 +20,7 @@ class DeliveryRoutingTests(unittest.TestCase):
         for status in ('queued', 'coalesced', 'deferred', 'steered', 'blocked'):
             response = {'id': 'posted', 'trigger_outcomes': [
                 {'target_id': 'recipient', 'status': status}]}
-            with self.subTest(status=status), patch('common.cli', side_effect=[[], response]):
+            with self.subTest(status=status), patch('featssship.cli', side_effect=[[], response]):
                 if status == 'blocked':
                     with self.assertRaisesRegex(ValueError, 'Comment posted but recipient delivery was blocked'):
                         comment('issue', 'handoff', steer_agent='recipient')
@@ -43,7 +44,7 @@ class DeliveryRoutingTests(unittest.TestCase):
             ([{**eligible, 'agent_id': 'other'}], None),
             ([{**eligible, 'agent_id': 'other'}, eligible, {**eligible, 'id': 'second'}], 'ready'),
         ):
-            with self.subTest(runs=rows), patch('common.cli', side_effect=[rows, {'id': 'posted'}]) as cli:
+            with self.subTest(runs=rows), patch('featssship.cli', side_effect=[rows, {'id': 'posted'}]) as cli:
                 self.assertEqual(comment('issue', 'recipient TODO', steer_agent='recipient'), {'id': 'posted'})
                 self.assertEqual(cli.call_count, 2)
                 words = cli.call_args.args
@@ -89,7 +90,7 @@ class WorkflowFixture(unittest.TestCase):
         binaries = self.base / 'bin'
         binaries.mkdir()
         script = binaries / 'multica'
-        script.write_text('#!' + sys.executable + '\nimport runpy\nrunpy.run_path(' + repr(str(ROOT / 'tests/fake_multica.py')) + ", run_name='__main__')\n")
+        script.write_text('#!' + sys.executable + '\nimport os, runpy, sys\nif sys.argv[1:2] == [\"sop\"]: os.execv(' + repr(MULTICA) + ', [' + repr(MULTICA) + ', *sys.argv[1:]])\nrunpy.run_path(' + repr(str(ROOT / 'tests/fake_multica.py')) + ", run_name='__main__')\n")
         script.chmod(0o755)
         self.env.update(PATH=str(binaries) + os.pathsep + os.environ['PATH'], FEATSSSHIP_FAKE_DB=str(self.db_path))
         config = {'repository': str(self.remote), 'delegator': {'name': 'Delegator', 'runtime_id': self.ids['runtime'], 'model': 'fixture', 'thinking_level': 'high'}, 'developer': {'name': 'Developer', 'runtime_id': self.ids['runtime'], 'model': 'fixture'},
@@ -135,8 +136,9 @@ class WorkflowFixture(unittest.TestCase):
 
     def installer(self, *args, ok=True):
         env = {**self.env, 'MULTICA_ISSUE_ID': self.ids['installer'],
-               'MULTICA_AGENT_ID': self.ids['main'], 'MULTICA_WORKSPACE_ID': self.ids['workspace']}
-        result = self.call(sys.executable, str(getattr(self, 'installer_entry', ROOT / 'installation/install.py')), *args, env=env, ok=ok)
+               'MULTICA_AGENT_ID': self.ids['main'], 'MULTICA_WORKSPACE_ID': self.ids['workspace'],
+               'MULTICA_SOP_SKILL_ROOTS': str(getattr(self, 'installer_package', ROOT / 'installation').parent)}
+        result = self.call(MULTICA, 'sop', 'run', 'multica-featssship-installation', *args, env=env, ok=ok)
         return json.loads(result.stdout)
 
     def installation_reply(self, content='confirm', *, author='member', parent=None):
@@ -168,10 +170,12 @@ class WorkflowFixture(unittest.TestCase):
     def invoke(self, package, *args, role='developer', issue=None, task=None, trigger=None, ok=True, plain=False):
         self.task = task or str(uuid.uuid4())
         env = {**self.env, 'MULTICA_AGENT_ID': self.config[role + '_id'],
-               'MULTICA_ISSUE_ID': issue or self.feature_id, 'MULTICA_WORKSPACE_ID': self.ids['workspace']}
+               'MULTICA_ISSUE_ID': issue or self.feature_id, 'MULTICA_WORKSPACE_ID': self.ids['workspace'],
+               'MULTICA_SOP_SKILL_ROOTS': str(package.parent)}
         if trigger:
             env['FEATSSSHIP_TRIGGER'] = trigger
-        result = self.call(sys.executable, str(package / 'wrapper.py'), *args, env=env, ok=ok)
+        name = next(line[6:] for line in (package / 'SKILL.md').read_text().splitlines() if line.startswith('name: '))
+        result = self.call(MULTICA, 'sop', 'run', name, *args, env=env, ok=ok)
         if plain:
             return result
         output = json.loads(result.stdout)
@@ -294,16 +298,17 @@ class WorkflowFixture(unittest.TestCase):
         for role, relative in (('installation', 'installation'), ('delegation', 'delegation'),
                                ('feature', 'delegation/dev-rev')):
             directory = build(role, self.base / (role + '-package'))
-            self.assertEqual(json.loads(self.call(sys.executable, str(directory / 'wrapper.py'),
-                                                 '--validate', env=env).stdout)['status'], 'valid')
-            help_text = self.call(sys.executable, str(directory / 'wrapper.py'), '--help', env=env).stdout
+            self.assertEqual(json.loads(self.call(MULTICA, 'sop', 'dev', 'validate', str(directory), env=env).stdout)['status'], 'valid')
+            env['MULTICA_SOP_SKILL_ROOTS'] = str(directory.parent)
+            name = next(line[6:] for line in (directory / 'SKILL.md').read_text().splitlines() if line.startswith('name: '))
+            help_text = self.call(MULTICA, 'sop', 'run', name, '--help', env=env).stdout
             self.assertEqual(help_text.strip(), (directory / 'SKILL.md').read_text().split('---', 2)[2].strip())
             package = self.base / (role + '-package')
             (package / 'config.json').write_text('{"DEBUG": false}\n')
             build(role, package)
             self.assertFalse(json.loads((package / 'config.json').read_text())['DEBUG'])
         # Installation must work without importing from the featssship checkout.
-        self.installer_entry = self.base / 'installation-package' / 'wrapper.py'
+        self.installer_package = self.base / 'installation-package'
         self.install()
         self.dispatch()
         self.assertEqual(self.invoke(self.developer)['status'], 'develop')

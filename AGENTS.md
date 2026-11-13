@@ -1,9 +1,8 @@
 # Developing multica-featssship
 
 Read README.md and docs/workflow.md. Source SoPs live in `installation/`,
-`delegation/` and `delegation/dev-rev/`. Keep procedure scripts and runtime files
-inside these folders. Build the smallest complete Developer–Reviewer prototype
-using the bundled Symbolic-SoP runtime. Keep this repository atomic; do not add
+`delegation/` and `delegation/dev-rev/`. Keep procedure scripts inside these
+folders. Build the smallest complete Developer–Reviewer prototype using the CLI-owned Symbolic-SoP engine. Keep this repository atomic; do not add
 submodules.
 
 Keep one commit per feature. Amend corrections and finish verification before pushing.
@@ -16,7 +15,7 @@ Installation is a resumable README-guided script in its assigned installer issue
 
 Developer and Reviewer have distinct native identities and separate contexts. Only develop belongs to Developer, who edits, tests and submits. All subsequent states belong to Reviewer, including approval, integration, push and completion. Retain one non-merge feature commit; allow a merge-resolution commit when parent integration returns rework. Reviewer reviews without editing source, returns corrections to Developer, and runs approved integration through the script. MAIN starts delegation in grilling with one issues-list batch document, refreshes it from an offline JSON file, waits for human confirmation, then dispatches and receives results. Keep settings in the installer-owned master JSON and dispatch-derived delegation attachments. Metadata stores only their references and necessary execution checkpoints. Preserve the original request, scope, selected review questions and review/rework loop.
 
-Runtime and common helpers live once in `installation/`; the builder includes them in every standalone package.
+Workflow helpers live in `installation/featssship.py`; the builder includes them in each standalone package. The CLI supplies the engine.
 
 Use `Workflow`, `State`, `Option` and declared prechecks from the current template. Each feature issue owns one SoP metadata record shared by both agents. Reject the wrong agent ID for the current phase. Dispatch prepares one issue-owned Git worktree; both roles use it without a separate Reviewer checkout. Let Git own worktree identity; store no custom folder registry or task ID. Publish findings, verdicts and delivery evidence as comments.
 
@@ -29,7 +28,7 @@ MAIN passes a short feature name; the installed direction prefix formats its bra
 Run local checks with `python3 -m unittest discover -s tests -v`. Build packages
 from `installation/` with `packages.build('installation', ...)`,
 `packages.build('delegation', ...)` or `packages.build('feature', ...)`; each
-validates via its `wrapper.py --validate`.
+validates via `multica sop dev validate DIRECTORY`.
 Use the [RSI creator](https://github.com/Winfred666/multica-RSI/blob/main/harness/skills/create-symbolic-sop/scripts/check.py)
 for generic runtime protocol and renderer checks, not another copy here.
 
@@ -50,5 +49,5 @@ that key. `--help` must not advance state. Dispatch prepares a local feature bra
 Only manual submissions push the feature branch, leasing its base or prior submitted commit.
 Verification commands come from the project description, not delegation config. Preserve
 these checks without adding a global lock. See [docs/workflow.md](docs/workflow.md)
-for routing, handoff output and debug graph behavior. The accepted runtime
-protocol is [RSI 0fd1fbb4a](https://github.com/Winfred666/multica-RSI/commit/0fd1fbb4a).
+for routing, handoff output and debug graph behavior. Run procedures with
+`multica sop run NAME`; `multica sop dev docs` describes the CLI-owned protocol.

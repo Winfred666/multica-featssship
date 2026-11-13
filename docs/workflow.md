@@ -29,11 +29,11 @@ source without changing delegation progress, platform skill bindings or existing
 dev-rev issues and their local packages.
 Skills deploy to the target repository's `.agents/skills/`; installation does not
 publish platform skills or change agent skill assignments.
-Dispatch and handoff prompts name that local wrapper's absolute path. Both roles
+Dispatch and handoff prompts use `multica sop run NAME`. Both roles
 run it from the prepared issue worktree, without agent-installed skills.
 
 Attachment revisions temporarily replace unavailable native mutable deliverables.
-`common.py` isolates upload and authenticated download/read, with TODOs for native
+`featssship.py` isolates upload and authenticated download/read, with TODOs for native
 update/preview. Grilling publishes a confirmation prompt with each attachment revision in the
 existing thread; other revisions use an empty-rendering comment. Readers select the latest matching owner/filename. References
 remain valid after edits, across issues. Serialize edits; immutable attachments
@@ -150,13 +150,15 @@ During native runs, each state change or completion publishes an HTML graph
 highlighting the actual resulting state. Selecting a node only inspects its
 guidance; it does not advance the workflow. Package rebuilds retain existing
 settings, so enable `DEBUG` explicitly in older packages. No renderer service
-is required. Callbacks use the running wrapper’s resolved file path; temporary
-preview builds show temporary paths, not installed skill locations.
+is required. Callbacks use `multica sop run NAME`; the CLI resolves repository-local
+skills before installed skills.
 
-`installation/` owns the reusable common module and runtime. The builder includes
-them in each standalone installation, delegation and dev-rev package; source
-controllers remain in their respective procedure folders.
+`installation/featssship.py` owns the reusable workflow helpers. The builder includes
+them in each standalone installation, delegation and dev-rev package. The CLI owns
+`wrapper`, `sop`, `common` and `monitor`; packages contain no engine copies. Each
+SKILL.md declares `metadata: {sop: symbolic}` for discovery. Source controllers
+remain in their respective procedure folders.
 
 Implementation note: delegation declares only `grilling`; runtime-owned `FINISHED`
 is the ringed-circle target that deletes only its SOP key and emits callback-free
-exit guidance. See the [runtime TODO](../installation/wrapper.py) for completion modes.
+exit guidance. See `multica sop dev docs` for completion modes.

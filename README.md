@@ -4,7 +4,7 @@ MAIN delegates; Developer implements and tests; Reviewer reviews and ships.
 
 ## Install
 
-Requires Python 3.11+, Git and authenticated `multica`.
+Requires Python 3.11+, Git and authenticated `multica` with `sop run` support.
 
 1. Create an installation issue in the target Multica project and assign an
    installer agent. Give it this README, the target repository and any known
@@ -21,7 +21,7 @@ Reuse an available featssship checkout. In the assigned installation issue,
 run from the **target repository checkout**:
 
 ```bash
-python3 /path/to/multica-featssship/installation/install.py
+MULTICA_SOP_SKILL_ROOTS=/path/to/multica-featssship multica sop run multica-featssship-installation
 ```
 
 Follow the returned editing and confirmation guidance. On a comment trigger,
@@ -36,7 +36,7 @@ then run from the **target repository checkout**:
 
 ```bash
 git -C /path/to/multica-featssship pull --ff-only
-python3 /path/to/multica-featssship/installation/install.py update
+MULTICA_SOP_SKILL_ROOTS=/path/to/multica-featssship multica sop run multica-featssship-installation update
 ```
 
 The retained `finished` state offers only `update` and returns there afterward.
@@ -44,7 +44,7 @@ Update retrieves the saved MAIN and refreshes its local delegation bundle and
 installation-managed entry/context references. It preserves settings, MAIN identity
 and delegation progress; it does not rebind platform skills or change existing
 dev-rev issues or their local packages. A standalone installer must be rebuilt
-from the latest source before running its `wrapper.py update`.
+from the latest source before running `multica sop run multica-featssship-installation update`.
 
 ## Shipping overview
 

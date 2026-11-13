@@ -1,9 +1,10 @@
 ---
 name: multica-featssship
 description: Dispatch a human-approved JSON batch.
+metadata: {sop: symbolic}
 ---
 
-In MAIN DEV:, run `python3 <this-skill-directory>/wrapper.py` from the target
+In MAIN DEV:, run `multica sop run multica-featssship` from the target
 repository with `--thread <request UUID>` and optional `--config '{"issues":[{}]}'`
 (one item by default).
 

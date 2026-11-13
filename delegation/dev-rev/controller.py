@@ -7,7 +7,7 @@ import subprocess
 from html import escape
 from urllib.parse import quote
 
-from common import DISPATCH_KEY, ROUND_DONE, REWORK_DONE, check_repo, clean, cli, comment, feature_config, git, run, test
+from featssship import DISPATCH_KEY, ROUND_DONE, REWORK_DONE, check_repo, clean, cli, comment, feature_config, git, run, test
 from sop import Branch, Completed, Option, Parameter, State, Workflow
 
 CACHE_VIEW = False

@@ -4,7 +4,7 @@ from pathlib import Path
 import uuid
 import tempfile
 
-from common import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, config_ref, delegation_config, download_config, entry_command, git, has_manual, link_config, read_config, request_config, repo_root, write_config
+from featssship import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, config_ref, delegation_config, download_config, entry_command, git, has_manual, link_config, read_config, request_config, repo_root, write_config
 from github_issue import issue_link, mirror_title
 from sop import FINISHED, Option, Parameter, State, Workflow
 
