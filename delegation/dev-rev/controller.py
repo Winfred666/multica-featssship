@@ -431,7 +431,7 @@ workflow = Workflow(
                params=(Parameter('--finding', 'Quick diagnosis and corrections; for REBASE CONFLICT include the renewed table'),)),
     )),
     State('done', FINAL_DONE + '; retain this SOP state. Amend only on an explicit outer request.',
-          precheck=observed, view=done_view, owner=owner('reviewer'), options=(
+          precheck=observed, view=done_view, owner=owner('developer'), options=(
               Option('amend', 'amending', 'ONLY explicit outer request: recreate the issue checkout at the delivered commit and reopen the issue.', amend),)),
     State('amending', 'Developer: amend the delivered commit in place, verify and interact briefly with outer as needed. No review loop; use push when ready.',
           precheck=observed, owner=owner('developer'), options=(
