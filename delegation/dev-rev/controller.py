@@ -7,7 +7,7 @@ import subprocess
 from html import escape
 from urllib.parse import quote
 
-from featssship import DISPATCH_KEY, ROUND_DONE, REWORK_DONE, check_repo, clean, cli, comment, feature_config, git, run, test
+from featssship import ROUND_DONE, REWORK_DONE, check_repo, clean, cli, comment, feature_config, git, run, test
 from sop import Branch, Completed, Option, Parameter, State, Workflow
 
 CACHE_VIEW = False
@@ -110,7 +110,7 @@ def submit(args, context):
     if binding['manual']:
         git(repo, 'push', '--force-with-lease=' + ref + ':' + context['state'].get('commit', context['issue']['metadata'].get('git_base_commit', '')), 'origin', 'HEAD:' + ref)
     feature = git(repo, 'rev-parse', 'HEAD')
-    context['state'].update(commit=feature, summary=args.summary,
+    context['state'].update(commit=feature,
                             feature=feature_link(repo, binding, feature), diff=diff_report(repo, binding))
     cli('issue', 'status', context['issue_id'], 'in_review')
 
@@ -168,13 +168,11 @@ def verdict(args, context):
     binding, state = context['binding'], context['state']
     if not (context['phase'] in ('manual_approve', 'integration_error') and args.event == 'rework') and git(shared_repo(context), 'rev-parse', 'HEAD') != state['commit']:
         raise ValueError('Review the exact submitted revision; changed code needs a new submission.')
-    if args.event == 'approve':
-        state['finding'] = args.finding
-        if context['phase'] == 'review' and binding['manual']:
-            row = comment(context['issue_id'], MANUAL_WAIT + '\n\nONLY outer allowed: reply approve, rework or cancel.', args.thread)
-            state['manual_comment_id'] = row['id']
-            context['handoff'] = MANUAL_WAIT
-            return {'phase': 'manual_approve'}
+    if args.event == 'approve' and context['phase'] == 'review' and binding['manual']:
+        row = comment(context['issue_id'], MANUAL_WAIT + '\n\nONLY outer allowed: reply approve, rework or cancel.', args.thread)
+        state['manual_comment_id'] = row['id']
+        context['handoff'] = MANUAL_WAIT
+        return {'phase': 'manual_approve'}
     if args.event == 'rework':
         if context['phase'] == 'integration_error':
             state.pop('integration_error', None)
@@ -383,17 +381,10 @@ def finish(context, integrated=None):
             return {'phase': 'develop', 'instruction': 'Parent push failed; restored the local branch/worktree for rework. Rebase onto the latest parent and submit for review again; keep one feature commit. ' + str(error)}
         state['integrated'] = integrated
     parent = context['binding']['main_issue_id']
-    main = cli('issue', 'get', parent)
     receipt = comment(parent, note, binding['dispatch_thread'])
     if not cancelled:
         cli('issue', 'comment', 'resolve', receipt['id'])
     cli('issue', 'metadata', 'delete', context['issue_id'], '--key', 'git_base_commit')
-    progress = json.loads(main.get('metadata', {}).get(DISPATCH_KEY, '{}'))
-    if progress.get('issue_id') == context['issue_id']:
-        for key in ('branch_base', 'remote_reserved'):
-            progress.pop(key, None)
-        cli('issue', 'metadata', 'set', parent, '--key', DISPATCH_KEY,
-            '--value', json.dumps(progress), '--type', 'string')
     cli('issue', 'status', context['issue_id'], 'cancelled' if cancelled else 'done')
     context['handoff'] = FINAL_DONE
     return {'phase': Workflow.FINISHED if cancelled else 'done', 'instruction': FINAL_DONE}

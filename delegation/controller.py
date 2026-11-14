@@ -38,8 +38,8 @@ def publish(batch, context):
     for item in batch['issues']:
         item.setdefault('manual', has_manual(context['main']) or context['installed'].get('manual', False))
     config = delegation_config(context['installed'], batch, **envelope)
-    row = write_config(context['reference'], config, context['args'].thread or envelope['dispatch_thread'], 'Config refreshed. Confirm or edit further ?')
-    context['record'] = {'thread': envelope['dispatch_thread'], 'draft_comment_id': row['id'],
+    write_config(context['reference'], config, context['args'].thread or envelope['dispatch_thread'], 'Config refreshed. Confirm or edit further ?')
+    context['record'] = {'thread': envelope['dispatch_thread'],
                          'draft_attachment_id': attachment(context['reference'])['id']}
     save_progress(context)
 
