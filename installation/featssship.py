@@ -6,9 +6,6 @@ import shlex
 import subprocess
 import tempfile
 
-# TODO: Runtime-enforced completion belongs to https://github.com/Winfred666/multica-RSI/issues/40.
-ROUND_DONE = 'Delivery done this round, directly and silently end this turn'
-REWORK_DONE = 'Rework sent, directly and silently end this turn'
 WAIT_OUTER = 'Directly and silently end this turn if outer confirmation has not been received yet.'
 CONFIG_KEY = 'featssship.config'
 DELEGATION_KEY = 'featssship.delegation'
@@ -129,21 +126,11 @@ def cli(*words, input=None):
     return json.loads(run('multica', *words, '--output', 'json', input=input))
 
 
-def comment(issue_id, content, parent=None, *, steer_agent=None):
+def comment(issue_id, content, parent=None):
     words = ['issue', 'comment', 'add', issue_id, '--content-stdin']
     if parent:
         words += ['--parent', parent]
-    if steer_agent:
-        for row in cli('issue', 'runs', issue_id, '--active'):
-            if (row['agent_id'] == steer_agent and row['status'] == 'running'
-                    and row.get('can_supplement') is True):
-                words += ['--steer', row['id']]
-                break
-    result = cli(*words, input=content)
-    if steer_agent and any(row['target_id'] == steer_agent and row['status'] == 'blocked'
-                           for row in result.get('trigger_outcomes', [])):
-        raise ValueError('Comment posted but recipient delivery was blocked; inspect trigger_outcomes before retrying: ' + json.dumps(result))
-    return result
+    return cli(*words, input=content)
 
 
 def mention(agent_id):

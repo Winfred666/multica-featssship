@@ -6,51 +6,21 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 MULTICA = shutil.which('multica')
 sys.path.insert(0, str(ROOT / 'installation'))
-from featssship import CONFIG_KEY, comment, config_ref, feature_branch
+from featssship import CONFIG_KEY, config_ref, feature_branch
 
 
-class DeliveryRoutingTests(unittest.TestCase):
-    def test_blocked_recipient_is_not_a_successful_handoff(self):
-        for status in ('queued', 'coalesced', 'deferred', 'steered', 'blocked'):
-            response = {'id': 'posted', 'trigger_outcomes': [
-                {'target_id': 'recipient', 'status': status}]}
-            with self.subTest(status=status), patch('featssship.cli', side_effect=[[], response]):
-                if status == 'blocked':
-                    with self.assertRaisesRegex(ValueError, 'Comment posted but recipient delivery was blocked'):
-                        comment('issue', 'handoff', steer_agent='recipient')
-                else:
-                    self.assertEqual(comment('issue', 'handoff', steer_agent='recipient'), response)
-
+class BranchNamingTests(unittest.TestCase):
     def test_configured_short_branch_names(self):
         for prefix in ('feat/frontend', 'fix/cli'):
             self.assertEqual(feature_branch({'name': 'work', 'branch_prefix': prefix}, 'tree-horizontal-more'),
                              prefix + '/tree-horizontal-more')
         with self.assertRaisesRegex(ValueError, 'short kebab-case'):
             feature_branch({'name': 'work'}, '../another-branch')
-
-    def test_steer_only_one_matching_supplementable_running_recipient(self):
-        eligible = {'id': 'ready', 'agent_id': 'recipient', 'status': 'running', 'can_supplement': True}
-        for rows, expected in (
-            ([], None),
-            ([{**eligible, 'can_supplement': False}], None),
-            ([{k: v for k, v in eligible.items() if k != 'can_supplement'}], None),
-            ([{**eligible, 'status': 'completed'}], None),
-            ([{**eligible, 'agent_id': 'other'}], None),
-            ([{**eligible, 'agent_id': 'other'}, eligible, {**eligible, 'id': 'second'}], 'ready'),
-        ):
-            with self.subTest(runs=rows), patch('featssship.cli', side_effect=[rows, {'id': 'posted'}]) as cli:
-                self.assertEqual(comment('issue', 'recipient TODO', steer_agent='recipient'), {'id': 'posted'})
-                self.assertEqual(cli.call_count, 2)
-                words = cli.call_args.args
-                self.assertEqual(words.count('--steer'), 1 if expected else 0)
-                if expected:
-                    self.assertEqual(words[-2:], ('--steer', expected))
 
 
 class WorkflowFixture(unittest.TestCase):

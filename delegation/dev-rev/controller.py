@@ -3,7 +3,7 @@ from pathlib import Path
 import os
 import json
 
-from featssship import ROUND_DONE, REWORK_DONE, check_repo, clean, cli, comment, feature_config, git, run, test
+from featssship import check_repo, clean, cli, comment, feature_config, git, run, test
 from sop import Branch, Completed, Option, Parameter, State, Workflow
 
 CACHE_VIEW = False
@@ -19,7 +19,6 @@ INTEGRATION_PROMPT = ('Reviewer: quickly judge and recover this integration/publ
                       'Hash changes from a clean rebase alone do not require source rework. '
                       'Choose rework only when Developer corrections are needed; retain submission, review and any required outer approval.')
 
-# TODO: break agent-as-middle-layer: the runtime should stop until superior input directly.
 MANUAL_WAIT = 'Auto review passed; wait for superior instruction. Directly and silently end this turn.'
 
 
@@ -27,11 +26,15 @@ def owner(role):
     return lambda context: cli('agent', 'get', context['binding'][role + '_id'])
 
 
-def handoff(args, context, owner):
-    comment(context['issue_id'], f'[@{owner["name"]}](mention://agent/{owner["id"]}) ' +
-            (args.summary + '\n\n' + context['state']['diff'] if args.event == 'submit' else args.finding if args.event == 'rework' else context['result']['next_step']['instruction']),
-            args.thread, steer_agent=owner['id'])
-    context['handoff'] = REWORK_DONE if context['phase'] == 'develop' else ROUND_DONE
+def handoff_guidance(context, role, message):
+    recipient, state = owner(role)(context), context['state']
+    return ('Use multica-peer-mention-protocol for one reply in the current issue thread. '
+            'Use the facts and links below without retrieving them again. '
+            'Fill only <brief explanation> from the actual feature context, not file sizes. '
+            'Then directly and silently end this turn; do not run the receiving role’s callback.\n\n'
+            f'[@{recipient["name"]}](mention://agent/{recipient["id"]}) {message}\n\n'
+            'Impact: <brief explanation>\n\n'
+            f'Submitted revision: {state["feature"]}\n\n{state["diff"]}')
 
 
 def review_view(context):
@@ -47,7 +50,6 @@ def observed(context):
     issue = cli('issue', 'get', context['issue_id'])
     context.update(issue=issue, binding=feature_config(issue))
     if issue['status'] == 'cancelled' or (issue['status'] == 'done' and context['phase'] not in ('done', 'amending')):
-        context['handoff'] = FINAL_DONE
         raise Completed(FINAL_DONE, target=Workflow.FINISHED)
 
 
@@ -98,6 +100,8 @@ def submit(args, context):
     context['state'].update(commit=feature,
                             feature=feature_link(repo, binding, feature), diff=diff_report(repo, binding))
     cli('issue', 'status', context['issue_id'], 'in_review')
+    return {'this_round_reply_guidance': handoff_guidance(context, 'reviewer',
+            args.summary + '\n\nVerified: `' + binding['test_command'] + '` passed.')}
 
 
 def diff_report(repo, binding):
@@ -106,7 +110,12 @@ def diff_report(repo, binding):
     sizes = [(int(added) if added != '-' else 0, int(deleted) if deleted != '-' else 0, path)
              for added, deleted, path in rows]
     totals = f'+{sum(a for a, _, _ in sizes)} / -{sum(d for _, d, _ in sizes)} lines across {len(rows)} files'
-    table = ['| File | Added / deleted |', '| --- | --- |']
+    remote = binding['repository'].removesuffix('.git').replace('git@github.com:', 'https://github.com/').rstrip('/')
+    base = git(repo, 'merge-base', 'origin/' + binding['parent_branch'], 'HEAD')
+    head = git(repo, 'rev-parse', 'HEAD')
+    totals += f' · [Full diff]({remote}/compare/{base}...{head})'
+    table = ['Largest file deltas (size only, not a complete feature explanation):',
+             '', '| File | Added / deleted |', '| --- | --- |']
     table += [f'| `{path}` | +{added} / -{deleted} |'
               for added, deleted, path in sorted(sizes, key=lambda row: row[0] + row[1], reverse=True)[:3]]
     return totals + ('\n\n' + '\n'.join(table) if rows else '')
@@ -153,15 +162,15 @@ def verdict(args, context):
     if not (context['phase'] in ('manual_approve', 'integration_error') and args.event == 'rework') and git(shared_repo(context), 'rev-parse', 'HEAD') != state['commit']:
         raise ValueError('Review the exact submitted revision; changed code needs a new submission.')
     if args.event == 'approve' and context['phase'] == 'review' and binding['manual']:
-        row = comment(context['issue_id'], MANUAL_WAIT + '\n\nONLY outer allowed: reply approve, rework or cancel.', args.thread)
+        row = comment(context['issue_id'], MANUAL_WAIT + '\n\nHuman or MAIN: reply with your instruction; no special wording is required.', args.thread)
         state['manual_comment_id'] = row['id']
-        context['handoff'] = MANUAL_WAIT
-        return {'phase': 'manual_approve'}
+        return {'this_round_reply_guidance': MANUAL_WAIT}
     if args.event == 'rework':
         if context['phase'] == 'integration_error':
             state.pop('integration_error', None)
         cli('issue', 'status', context['issue_id'], 'in_progress')
-    return {'phase': 'approve' if args.event == 'approve' else 'develop'}
+        return {'this_round_reply_guidance': handoff_guidance(context, 'developer', args.finding)}
+    return {}
 
 
 def retained_rebase(repo):
@@ -233,9 +242,7 @@ def advance_parent(repo, binding, integrated, previous=None):
 
 
 def done_view(context):
-    if context['args'].event == 'init':
-        context['handoff'] = FINAL_DONE
-    return {}
+    return {'instruction': f'Feature commit already pushed to {context["binding"]["parent_branch"]}. Use amend to revise that pushed feature.'}
 
 
 def amend(args, context):
@@ -289,46 +296,51 @@ def finish(context, integrated=None):
         cli('issue', 'comment', 'resolve', receipt['id'])
     cli('issue', 'metadata', 'delete', context['issue_id'], '--key', 'git_base_commit')
     cli('issue', 'status', context['issue_id'], 'cancelled' if cancelled else 'done')
-    context['handoff'] = FINAL_DONE
-    return {'phase': Workflow.FINISHED if cancelled else 'done', 'instruction': FINAL_DONE}
+    return {'phase': Workflow.FINISHED if cancelled else 'done',
+            'this_round_reply_guidance': FINAL_DONE}
 
 
 workflow = Workflow(
     State('develop', 'Developer: implement the issue request on MAIN’s feature branch in the current issue folder. '
-          'Keep one feature commit; amend corrections, never merge. Continue any retained rebase, then test and submit.', initial=True, precheck=observed, view=enter_develop, owner=owner('developer'),
-          options=(Option('submit', 'review', 'Test and request independent review; push only if manual.', submit,
-                          params=(Parameter('--summary', 'Delivered behavior and evidence'),)),
-                   Option('cancel', Workflow.FINISHED, 'Cancel for wrong feature scope, incomplete Git/version infrastructure, or refactoring beyond the allowed edit budget; preserve or commit edits first.', verdict,
-                          params=(Parameter('--reason', 'Concrete blocker preventing this feature'),)),)),
+          'Keep one feature commit; amend corrections, never merge. Continue any retained rebase, then test and submit.',
+          initial=True, precheck=observed, view=enter_develop, owner=owner('developer')),
     State('review', REVIEW_PROMPT,
-          precheck=observed, owner=owner('reviewer'), view=review_view, options=(
-              Option('approve', 'approval', 'Approve the revision; manual config waits for outer approval.', verdict,
-                     params=(Parameter('--finding', 'Review answers and evidence'),)),
-              Option('rework', 'develop', 'Send corrections to Developer.', verdict,
-                     params=(Parameter('--finding', 'Concrete corrections'),)),
-              Option('cancel', Workflow.FINISHED, 'Cancel for wrong scope, incomplete Git/version infrastructure or refactoring beyond the edit budget; script cleans locally without merging or pushing.', verdict,
-                     params=(Parameter('--reason', 'Concrete cancellation blocker'),)))),
-    Branch('approval', 'manual config?', {'manual': 'manual_approve', 'automatic': 'approve'}),
-    State('approve', 'Reviewer: automated review passed. Use final_approve to rebase onto latest main and integrate; recover failures as Reviewer.',
-          precheck=observed, owner=owner('reviewer'), options=(Option('final_approve', 'merge_result', 'Rebase approved work, run required checks and ship.', merge_approved),)),
-    State('manual_approve', MANUAL_WAIT, precheck=observed, owner=owner('reviewer'), options=(
-        Option('rework', 'develop', 'Reviewer: return corrections to Developer without integration.', verdict,
-               params=(Parameter('--finding', 'Review corrections or superior-requested rework'),)),
-        Option('final_approve', 'merge_result', 'ONLY outer allowed: rebase approved work, run required checks and ship.', merge_approved),
-        Option('cancel', Workflow.FINISHED, 'ONLY outer allowed: cancel the feature and clean up without integration.', verdict,
-               params=(Parameter('--reason', 'Superior cancellation reason'),)),
-    )),
-    Branch('merge_result', 'Integration/publication error?', {'error': 'integration_error', 'merged': 'done'}),
-    State('integration_error', INTEGRATION_PROMPT, precheck=observed, view=integration_view, owner=owner('reviewer'), options=(
-        Option('environment_repaired', 'approve', 'Reviewer recovery completed: retry approved integration with required checks.'),
-        Option('rework', 'develop', 'Reviewer chooses source corrections: return to Developer through the existing submission and review gates; preserve interrupted Git state.', verdict,
-               params=(Parameter('--finding', 'Quick diagnosis and required Developer corrections'),)),
-    )),
-    State('done', FINAL_DONE + '; retain this SOP state. Amend only on an explicit outer request.',
-          precheck=observed, view=done_view, owner=owner('developer'), options=(
-              Option('amend', 'amending', 'ONLY explicit outer request: recreate the issue checkout at the delivered commit and reopen the issue.', amend),)),
+          precheck=observed, owner=owner('reviewer'), view=review_view),
+    State('manual_approve', MANUAL_WAIT, precheck=observed, owner=owner('reviewer')),
+    State('integration_error', INTEGRATION_PROMPT, precheck=observed, view=integration_view, owner=owner('reviewer')),
+    State('done', 'Feature commit already pushed to the parent branch. Use amend to revise that pushed feature.',
+          precheck=observed, view=done_view, owner=owner('developer')),
     State('amending', 'Developer: amend the delivered commit in place, verify and interact briefly with outer as needed. No review loop; use push when ready.',
-          precheck=observed, owner=owner('developer'), options=(
-              Option('push', 'done', 'Publish the amended commit, clean up and mark the native issue done.', push),)),
-    params=(Parameter('--thread', 'Native triggering comment UUID', required=False),), handoff=handoff,
+          precheck=observed, owner=owner('developer')),
+    Option('submit', prompt='Test and request independent review; push only if manual.', action=submit,
+           params=(Parameter('--summary', 'Delivered behavior and evidence'),)),
+    Option('approve', prompt='Approve the revision; manual config waits for outer approval.', action=verdict,
+           params=(Parameter('--finding', 'Review answers and evidence'),)),
+    Option('rework', prompt='Reviewer: return corrections to Developer for fresh submission, review and approval; preserve interrupted Git state.', action=verdict,
+           params=(Parameter('--finding', 'Quick diagnosis and required Developer corrections'),)),
+    Option('cancel', prompt='Cancel for scope, Git/version infrastructure or edit-budget blockers; preserve or commit edits first. ONLY outer allowed from manual_approve.', action=verdict,
+           params=(Parameter('--reason', 'Concrete cancellation blocker'),)),
+    Option('final_approve', prompt='Rebase approved work, run required checks and ship. ONLY outer allowed from manual_approve.', action=merge_approved),
+    Option('environment_repaired', prompt='Reviewer recovery completed: retry approved integration with required checks.'),
+    Option('amend', prompt='ONLY explicit outer request: recreate the issue checkout at the delivered commit and reopen the issue.', action=amend),
+    Option('push', prompt='Publish the amended commit, clean up and mark the native issue done.', action=push),
+    Branch('approval', 'manual config?',
+           select=lambda args, context: 'manual_approve' if context['binding']['manual'] else 'final_approve'),
+    Branch('merge_result', 'Integration successful?'),
+    edges=(
+        ('develop', 'submit'), ('develop', 'cancel'),
+        ('submit', 'review'),
+        ('review', 'approve'), ('review', 'rework'), ('review', 'cancel'),
+        ('approve', 'approval'),
+        ('approval', 'manual_approve'), ('approval', 'final_approve'),
+        ('manual_approve', 'rework'), ('manual_approve', 'final_approve'), ('manual_approve', 'cancel'),
+        ('final_approve', 'merge_result'),
+        ('merge_result', 'integration_error'), ('merge_result', 'done'),
+        ('integration_error', 'environment_repaired'), ('integration_error', 'rework'),
+        ('environment_repaired', 'final_approve'),
+        ('rework', 'develop'), ('cancel', Workflow.FINISHED),
+        ('done', 'amend'), ('amend', 'amending'),
+        ('amending', 'push'), ('push', 'done'),
+    ),
+    params=(Parameter('--thread', 'Native triggering comment UUID', required=False),),
 )
