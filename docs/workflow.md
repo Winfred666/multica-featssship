@@ -79,33 +79,10 @@ from the installer master and verification commands from the project description
 
 MAIN passes a short name;
 the configured direction prefix formats the feature branch. The child uses its
-prepared issue worktree for one shared [procedure](../delegation/dev-rev/controller.py):
+prepared issue worktree for one shared [procedure](../delegation/dev-rev/controller.py).
 
-```dot
-digraph develop_review {
-  rankdir=LR; node [shape=box];
-  develop [label="Developer: implement, test and submit"];
-  review [label="Reviewer: inspect exact revision"];
-  approval [shape=diamond, label="manual config?"];
-  approve [label="Reviewer: auto-approved action"];
-  manual_approve [label="manual_approve: wait for outer instruction"];
-  merge_result [shape=diamond, label="Merge conflict / rework?"];
-  finished [label="finished: cleaned, pushed if approved, reported", peripheries=2];
-  develop -> review [label="submit"];
-  review -> develop [label="rework"];
-  review -> approval [label="approve"];
-  approval -> approve [label="automatic"];
-  approval -> manual_approve [label="manual"];
-  approve -> merge_result [label="final_approve: merge_approved"];
-  manual_approve -> merge_result [label="final_approve: same merge_approved; ONLY outer allowed"];
-  manual_approve -> develop [label="rework: Reviewer returns corrections"];
-  develop -> finished [label="cancel: cleanup only"];
-  review -> finished [label="cancel: cleanup only"];
-  manual_approve -> finished [label="cancel: cleanup only; ONLY outer allowed"];
-  merge_result -> develop [label="rework"];
-  merge_result -> finished [label="merged: cleanup then push automatically"];
-}
-```
+The DEBUG HTML is compiled from that controller’s `Workflow`, including both
+approval and integration-result diamonds and the shared registered action.
 
 Both roles use the current issue folder and the same metadata record. The native
 agent ID guards each phase. MAIN's `name: tree-horizontal-more` plus installed
@@ -119,15 +96,18 @@ the reserved revision and corrections lease the prior submission. Automatic
 features stay local until their approved result is pushed to the existing parent branch.
 Features share no branch registry or SOP-wide lock.
 A manual config adds the manual label before the child starts. Review never
-creates a checkout or switches branches. Automated review approval hands the
-Reviewer the `final_approve` action; manual approval waits in `manual_approve` for
-human or MAIN input. Both states use `final_approve` to call the same `merge_approved`
-function. It checks the exact approved HEAD, merges/tests, and fast-forwards local
-main in its clean existing worktree (or atomically advances its unoccupied ref).
-No feature worktree changes branch. The merge-result diamond comes before terminal
-finished: conflicts return to develop with the unresolved merge preserved, for a
-resolution merge commit and another review. Success continues directly through
-local feature cleanup, parent push and MAIN delivery, then enters finished.
+creates a checkout or switches branches. Automated review approval passes through
+the manual-config diamond directly to the registered `final_approve` action; there is no automatic approval State.
+Manual approval waits in `manual_approve` for human or MAIN input, then uses the
+same action. The engine runs that action and the integration-result diamond
+until a State is reached. Integration checks the exact approved HEAD, rebases/tests,
+and fast-forwards local main in its clean existing worktree (or atomically advances
+its unoccupied ref). No feature worktree changes branch. The integration-result
+diamond routes errors to Reviewer diagnosis and changed
+revisions to develop for fresh submission and approval. Rebase conflicts retain
+the interrupted rebase for Developer corrections. Success continues directly
+through local feature cleanup, parent push and MAIN delivery, then retains `done`
+for an explicit outer-requested amendment without another review loop.
 A rejected push restores the local feature branch/worktree for rework. There is
 no reported state, final-state action or finish command.
 
@@ -141,21 +121,15 @@ read-only for source; approved integration runs the scripted checks. Human accep
 State owners resolve native `{id, name}` in the wrapper for actor checks,
 handoffs and tiny HTML labels.
 
-Each successful delivery
-posts one concise recipient mention using the declared state's native owner name, without
-TODO, self-reference or SHA. Reports to MAIN are receipt-only notes under the
-original dispatch comment, using native `/note` without mentions or steering. The batch attachment retains the original dispatch thread.
-The acting agent interprets superior instructions; scripts verify identity and
-ordering, not literal approval wording. Blocked recipient delivery fails the
-handoff. Steering requires a matching running
-recipient with `can_supplement: true`; otherwise the mention takes the normal route.
-The sender ends this turn silently after handoff: "Rework sent, directly and silently end this turn"
-for rework, the superior wait for manual approval, and otherwise
-"Delivery done this round, directly and silently end this turn". Metadata and HTML
-retain the receiving role's guidance. Failures remain errors. This is guidance,
-not enforced turn completion or a measured token saving; enforcement belongs to
-the runner ([multica-RSI#40](https://github.com/Winfred666/multica-RSI/issues/40)).
-Wrong-role action calls exit nonzero on stderr without JSON or writes.
+Submission and rework return `this_round_reply_guidance`: the acting agent uses
+`multica-peer-mention-protocol` to post one direct handoff in the current issue
+thread, mentioning the receiving role, then ends the turn silently. The engine
+keeps the destination's ordinary guidance, ownership and later callbacks intact;
+only this invocation's output is masked. No local handoff hook posts or steers
+these comments. Manual review retains its ordered outer-approval checkpoint and
+returns wait guidance. Reports to MAIN remain receipt-only `/note` comments under
+the original dispatch thread, without mentions or steering. Failures remain errors.
+Wrong-role calls exit nonzero on stderr without JSON or writes.
 
 Select `review` to inspect the request, scope and selected questions.
 The installation direction's `questions` apply by default; a delegation `questions`

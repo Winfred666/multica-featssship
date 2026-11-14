@@ -7,7 +7,7 @@ import subprocess
 from html import escape
 from urllib.parse import quote
 
-from featssship import ROUND_DONE, REWORK_DONE, check_repo, clean, cli, comment, feature_config, git, run, test
+from featssship import check_repo, clean, cli, comment, feature_config, git, run, test
 from sop import Branch, Completed, Option, Parameter, State, Workflow
 
 CACHE_VIEW = False
@@ -27,7 +27,6 @@ INTEGRATION_PROMPT = ('Reviewer: quickly diagnose this integration failure, not 
                       'Environment retry needs no completed table. '
                       'Preserve interrupted Git/rebase state; do not abort or restart it blindly.')
 
-# TODO: break agent-as-middle-layer: the runtime should stop until superior input directly.
 MANUAL_WAIT = 'Auto review passed; wait for superior instruction. Directly and silently end this turn.'
 
 
@@ -35,11 +34,11 @@ def owner(role):
     return lambda context: cli('agent', 'get', context['binding'][role + '_id'])
 
 
-def handoff(args, context, owner):
-    comment(context['issue_id'], f'[@{owner["name"]}](mention://agent/{owner["id"]}) ' +
-            (args.summary + '\n\n' + context['state']['diff'] if args.event == 'submit' else args.finding if args.event == 'rework' else context['result']['next_step']['instruction']),
-            args.thread, steer_agent=owner['id'])
-    context['handoff'] = REWORK_DONE if context['phase'] == 'develop' else ROUND_DONE
+def handoff_guidance(context, role, message):
+    recipient = owner(role)(context)
+    return ('Use multica-peer-mention-protocol to post this handoff in the current issue thread: '
+            f'[@{recipient["name"]}](mention://agent/{recipient["id"]}) {message}\n\n'
+            'Then directly and silently end this turn. Do not run the receiving role’s callback.')
 
 
 def review_view(context):
@@ -63,7 +62,6 @@ def observed(context):
     issue = cli('issue', 'get', context['issue_id'])
     context.update(issue=issue, binding=feature_config(issue))
     if issue['status'] == 'cancelled' or (issue['status'] == 'done' and context['phase'] not in ('done', 'amending')):
-        context['handoff'] = FINAL_DONE
         raise Completed(FINAL_DONE, target=Workflow.FINISHED)
 
 
@@ -113,6 +111,8 @@ def submit(args, context):
     context['state'].update(commit=feature,
                             feature=feature_link(repo, binding, feature), diff=diff_report(repo, binding))
     cli('issue', 'status', context['issue_id'], 'in_review')
+    return {'this_round_reply_guidance': handoff_guidance(context, 'reviewer',
+            args.summary + '\n\n' + context['state']['diff'])}
 
 
 def diff_report(repo, binding):
@@ -171,13 +171,13 @@ def verdict(args, context):
     if args.event == 'approve' and context['phase'] == 'review' and binding['manual']:
         row = comment(context['issue_id'], MANUAL_WAIT + '\n\nONLY outer allowed: reply approve, rework or cancel.', args.thread)
         state['manual_comment_id'] = row['id']
-        context['handoff'] = MANUAL_WAIT
-        return {'phase': 'manual_approve'}
+        return {'this_round_reply_guidance': MANUAL_WAIT}
     if args.event == 'rework':
         if context['phase'] == 'integration_error':
             state.pop('integration_error', None)
         cli('issue', 'status', context['issue_id'], 'in_progress')
-    return {'phase': 'approve' if args.event == 'approve' else 'develop'}
+        return {'this_round_reply_guidance': handoff_guidance(context, 'developer', args.finding)}
+    return {}
 
 
 def retained_rebase(repo):
@@ -296,7 +296,9 @@ def merge_approved(args, context):
             git(repo, 'rebase', upstream)
         if git(repo, 'rev-parse', 'HEAD') != commit:
             cli('issue', 'status', context['issue_id'], 'in_progress')
-            return {'phase': 'develop', 'instruction': 'Rebased onto latest main. Submit the changed revision for fresh review and approval; keep one feature commit.'}
+            instruction = 'Rebased onto latest main. Submit the changed revision for fresh review and approval; keep one feature commit.'
+            return {'phase': 'develop', 'instruction': instruction,
+                    'this_round_reply_guidance': handoff_guidance(context, 'developer', instruction)}
         test(repo, binding['test_command'])
         advance_parent(repo, binding, commit)
         state['integrated'] = commit
@@ -327,12 +329,6 @@ def advance_parent(repo, binding, integrated, previous=None):
         if old and not previous:
             git(repo, 'merge-base', '--is-ancestor', old, integrated)
         git(repo, 'update-ref', ref, integrated, old)
-
-
-def done_view(context):
-    if context['args'].event == 'init':
-        context['handoff'] = FINAL_DONE
-    return {}
 
 
 def amend(args, context):
@@ -378,7 +374,9 @@ def finish(context, integrated=None):
             cli('issue', 'status', context['issue_id'], 'in_progress')
             if amending:
                 return {'phase': 'amending', 'instruction': 'Parent push failed; restored the amendment checkout. Resolve with outer and retry push without review. ' + str(error)}
-            return {'phase': 'develop', 'instruction': 'Parent push failed; restored the local branch/worktree for rework. Rebase onto the latest parent and submit for review again; keep one feature commit. ' + str(error)}
+            instruction = 'Parent push failed; restored the local branch/worktree for rework. Rebase onto the latest parent and submit for review again; keep one feature commit. ' + str(error)
+            return {'phase': 'develop', 'instruction': instruction,
+                    'this_round_reply_guidance': handoff_guidance(context, 'developer', instruction)}
         state['integrated'] = integrated
     parent = context['binding']['main_issue_id']
     receipt = comment(parent, note, binding['dispatch_thread'])
@@ -386,8 +384,8 @@ def finish(context, integrated=None):
         cli('issue', 'comment', 'resolve', receipt['id'])
     cli('issue', 'metadata', 'delete', context['issue_id'], '--key', 'git_base_commit')
     cli('issue', 'status', context['issue_id'], 'cancelled' if cancelled else 'done')
-    context['handoff'] = FINAL_DONE
-    return {'phase': Workflow.FINISHED if cancelled else 'done', 'instruction': FINAL_DONE}
+    return {'phase': Workflow.FINISHED if cancelled else 'done', 'instruction': FINAL_DONE,
+            'this_round_reply_guidance': FINAL_DONE}
 
 
 workflow = Workflow(
@@ -405,27 +403,27 @@ workflow = Workflow(
                      params=(Parameter('--finding', 'Concrete corrections'),)),
               Option('cancel', Workflow.FINISHED, 'Cancel for wrong scope, incomplete Git/version infrastructure or refactoring beyond the edit budget; script cleans locally without merging or pushing.', verdict,
                      params=(Parameter('--reason', 'Concrete cancellation blocker'),)))),
-    Branch('approval', 'manual config?', {'manual': 'manual_approve', 'automatic': 'approve'}),
-    State('approve', 'Reviewer: automated review passed. Use final_approve to rebase onto latest main; changed revisions return for fresh review and approval.',
-          precheck=observed, owner=owner('reviewer'), options=(Option('final_approve', 'merge_result', 'Rebase approved work; changed revisions return for review, unchanged approval ships.', merge_approved),)),
+    Branch('approval', 'manual config?', {'manual': 'manual_approve', 'automatic': 'final_approve'},
+           select=lambda args, context: 'manual' if context['binding']['manual'] else 'automatic'),
+    Option('final_approve', 'merge_result', 'Rebase approved work; changed revisions need fresh review and approval. ONLY outer allowed from manual_approve.', merge_approved),
     State('manual_approve', MANUAL_WAIT, precheck=observed, owner=owner('reviewer'), options=(
         Option('rework', 'develop', 'Reviewer: return corrections to Developer without integration.', verdict,
                params=(Parameter('--finding', 'Review corrections or superior-requested rework'),)),
-        Option('final_approve', 'merge_result', 'ONLY outer allowed: rebase approved work; changed revisions need fresh review and approval.', merge_approved),
+        'final_approve',
         Option('cancel', Workflow.FINISHED, 'ONLY outer allowed: cancel the feature and clean up without integration.', verdict,
                params=(Parameter('--reason', 'Superior cancellation reason'),)),
     )),
     Branch('merge_result', 'Integration error / changed revision?', {'error': 'integration_error', 'rework': 'develop', 'merged': 'done'}),
     State('integration_error', INTEGRATION_PROMPT, precheck=observed, view=integration_view, owner=owner('reviewer'), options=(
-        Option('environment_repaired', 'approve', 'Out-of-repo/environment repair completed: retry automatic approve with existing unchanged-revision approval.', retry_integration),
+        Option('environment_repaired', 'final_approve', 'Out-of-repo/environment repair completed: retry integration with existing unchanged-revision approval.', retry_integration),
         Option('rework', 'develop', 'Repo-originated defect/conflict: return to Developer through the existing submission and review gates; preserve interrupted Git state.', verdict,
                params=(Parameter('--finding', 'Quick diagnosis and corrections; for REBASE CONFLICT include the renewed table'),)),
     )),
     State('done', FINAL_DONE + '; retain this SOP state. Amend only on an explicit outer request.',
-          precheck=observed, view=done_view, owner=owner('developer'), options=(
+          precheck=observed, owner=owner('developer'), options=(
               Option('amend', 'amending', 'ONLY explicit outer request: recreate the issue checkout at the delivered commit and reopen the issue.', amend),)),
     State('amending', 'Developer: amend the delivered commit in place, verify and interact briefly with outer as needed. No review loop; use push when ready.',
           precheck=observed, owner=owner('developer'), options=(
               Option('push', 'done', 'Publish the amended commit, clean up and mark the native issue done.', push),)),
-    params=(Parameter('--thread', 'Native triggering comment UUID', required=False),), handoff=handoff,
+    params=(Parameter('--thread', 'Native triggering comment UUID', required=False),),
 )
