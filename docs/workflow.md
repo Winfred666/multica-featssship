@@ -1,4 +1,23 @@
-# Shipping flow
+# Developing the shipping SoPs
+
+## Source layout and packages
+
+```text
+installation/                Installer: SKILL.md, controller.py, install.py, packages.py
+  featssship.py, config.json  Shared helpers and DEBUG default
+delegation/                  MAIN: SKILL.md, controller.py, github_issue.py
+  dev-rev/                   Developer–Reviewer: SKILL.md, controller.py
+```
+
+From `installation/`, use `packages.build('installation', destination)`,
+`packages.build('delegation', destination)` or `packages.build('feature', destination)`.
+The builder supplies shared helpers/config and validates with `multica sop dev validate DIRECTORY`.
+Installer packages include both child SoPs. Deployment builds directly into `.agents/skills/`,
+preserving config. Dispatch copies the dev-rev package into each prepared child worktree
+before starting it, without replacing an existing package. Updates leave in-flight copies untouched.
+The CLI supplies the engine; each SKILL.md declares `metadata: {sop: symbolic}`.
+
+## Shipping flow
 
 Installation has two states:
 
@@ -27,8 +46,7 @@ Re-entry preserves settings and MAIN identity; its immediate MAIN checkpoint rem
 for retries and updates. [Update commands](../README.md#update) use the latest
 source without changing delegation progress, platform skill bindings or existing
 dev-rev issues and their local packages.
-Skills deploy to the target repository's `.agents/skills/`; installation does not
-publish platform skills or change agent skill assignments.
+Installation does not publish platform skills or change agent skill assignments.
 Dispatch and handoff prompts use `multica sop run NAME`. Both roles
 run it from the prepared issue worktree, without agent-installed skills.
 
@@ -152,12 +170,6 @@ guidance; it does not advance the workflow. Package rebuilds retain existing
 settings, so enable `DEBUG` explicitly in older packages. No renderer service
 is required. Callbacks use `multica sop run NAME`; the CLI resolves repository-local
 skills before installed skills.
-
-`installation/featssship.py` owns the reusable workflow helpers. The builder includes
-them in each standalone installation, delegation and dev-rev package. The CLI owns
-`wrapper`, `sop`, `common` and `monitor`; packages contain no engine copies. Each
-SKILL.md declares `metadata: {sop: symbolic}` for discovery. Source controllers
-remain in their respective procedure folders.
 
 Implementation note: delegation declares only `grilling`; runtime-owned `FINISHED`
 is the ringed-circle target that deletes only its SOP key and emits callback-free

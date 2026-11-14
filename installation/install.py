@@ -2,10 +2,9 @@
 """README installer: edit one config, then install after human confirmation."""
 import re
 import shlex
-import shutil
 
 from featssship import check_repo, cli, config_ref, exclude_local, feature_branch, link_config, repo_root, write_config
-from packages import ENGINE_FILES, build
+from packages import build
 
 START, END = '<!-- featssship:installation -->', '<!-- /featssship:installation -->'
 
@@ -136,12 +135,12 @@ def deploy(config, issue, root, *, include_feature=True):
         raise ValueError('The MAIN root must be assigned to a MAIN agent.')
     link_config(root['id'], config_ref(issue))
     exclude_local(repo)
-    local = repo / '.multica' / 'featssship' / 'packages'
+    destination = repo / '.agents' / 'skills'
     name = 'multica-featssship-' + issue['project_id'][:8]
-    packages = [build('delegation', local / name, name=name)]
+    build('delegation', destination / name, name=name)
     # Existing dev-rev entry paths may be pinned by in-flight issues.
     if include_feature:
-        packages.append(build('feature', local / 'multica-featssship-develop-review'))
+        build('feature', destination / 'multica-featssship-develop-review')
     # Remove only the old installer's owned block, preserving project context.
     project_text = re.sub(re.escape(START) + r'.*?' + re.escape(END), '', project.get('description') or '', flags=re.S)
     init_text = 'Repository: ' + config['repository'] + '\n\n' + '\n'.join(
@@ -154,17 +153,4 @@ def deploy(config, issue, root, *, include_feature=True):
                         'Developer implements and tests; Reviewer owns review, approved integration and completion.\n\nRun `' + shlex.join(['multica', 'sop', 'run', name]) + '` from the target repository root.')
     title = 'MAIN DEV: ' + re.sub(r'^(?:MAIN DEV:\s*)+', '', root['title'])
     cli('issue', 'update', root['id'], '--title', title, '--description-stdin', '--no-start', input=root_text)
-    destination = repo / '.agents' / 'skills'
-    for package in packages:
-        target = destination / package.name
-        ignored = ['.state', '__pycache__', '.errors']
-        if (target / 'config.json').exists():
-            ignored.append('config.json')
-        shutil.copytree(package, target, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*ignored))
-        for filename in ENGINE_FILES:
-            (target / filename).unlink(missing_ok=True)
-        (target / 'DEBUG.md').unlink(missing_ok=True)
-        (target / 'installation.json').unlink(missing_ok=True)
-        for obsolete in (target / 'roles').glob('*-debug.md'):
-            obsolete.unlink()
     return shlex.join(['multica', 'sop', 'run', name])

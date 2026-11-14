@@ -1,9 +1,8 @@
 # Developing multica-featssship
 
-Read README.md and docs/workflow.md. Source SoPs live in `installation/`,
-`delegation/` and `delegation/dev-rev/`. Keep procedure scripts inside these
-folders. Build the smallest complete Developer–Reviewer prototype using the CLI-owned Symbolic-SoP engine. Keep this repository atomic; do not add
-submodules.
+Read README.md for usage and [docs/workflow.md](docs/workflow.md) for source
+layout and package builds. Keep procedure scripts in their owning SoP folder.
+Use the CLI-owned Symbolic-SoP engine. Keep this repository atomic; no submodules.
 
 Keep one commit per feature. Amend corrections and finish verification before pushing.
 
@@ -15,8 +14,6 @@ Installation is a resumable README-guided script in its assigned installer issue
 
 Developer and Reviewer have distinct native identities and separate contexts. Only develop belongs to Developer, who edits, tests and submits. All subsequent states belong to Reviewer, including approval, integration, push and completion. Retain one non-merge feature commit; allow a merge-resolution commit when parent integration returns rework. Reviewer reviews without editing source, returns corrections to Developer, and runs approved integration through the script. MAIN starts delegation in grilling with one issues-list batch document, refreshes it from an offline JSON file, waits for human confirmation, then dispatches and receives results. Keep settings in the installer-owned master JSON and dispatch-derived delegation attachments. Metadata stores only their references and necessary execution checkpoints. Preserve the original request, scope, selected review questions and review/rework loop.
 
-Workflow helpers live in `installation/featssship.py`; the builder includes them in each standalone package. The CLI supplies the engine.
-
 Use `Workflow`, `State`, `Option` and declared prechecks from the current template. Each feature issue owns one SoP metadata record shared by both agents. Reject the wrong agent ID for the current phase. Dispatch prepares one issue-owned Git worktree; both roles use it without a separate Reviewer checkout. Let Git own worktree identity; store no custom folder registry or task ID. Publish findings, verdicts and delivery evidence as comments.
 
 Keep tests under `tests/` small: installer resumption, delegation, branch/routing guards and one correction/integration smoke path. Use real workspace runs for native handoffs and HTML verification instead of duplicating the platform or generic runtime's test suite. Reuse settled evidence; run only checks affected by a change. Keep workspace evidence outside Git.
@@ -25,10 +22,7 @@ MAIN passes a short feature name; the installed direction prefix formats its bra
 
 ## Implementation notes
 
-Run local checks with `python3 -m unittest discover -s tests -v`. Build packages
-from `installation/` with `packages.build('installation', ...)`,
-`packages.build('delegation', ...)` or `packages.build('feature', ...)`; each
-validates via `multica sop dev validate DIRECTORY`.
+Run affected local checks from `python3 -m unittest discover -s tests -v`.
 Use the [RSI creator](https://github.com/Winfred666/multica-RSI/blob/main/harness/skills/create-symbolic-sop/scripts/check.py)
 for generic runtime protocol and renderer checks, not another copy here.
 

@@ -1,6 +1,7 @@
 """MAIN dispatches one human-approved JSON batch and resumes each child."""
 import json
 from pathlib import Path
+import shutil
 import uuid
 import tempfile
 
@@ -151,6 +152,10 @@ def dispatch_item(context, request, record, index):
             raise ValueError('The feature worktree belongs to another branch.')
         record['branch_base'] = git(worktree, 'rev-parse', 'HEAD')
         save_progress(context)
+    skill = Path('.agents/skills/multica-featssship-develop-review')
+    if not (worktree / skill).exists():
+        shutil.copytree(repo / skill, worktree / skill,
+                        ignore=shutil.ignore_patterns('.state', '__pycache__', '.errors'))
     if request['manual'] and not record.get('remote_reserved'):
         if git(repo, 'ls-remote', 'origin', ref):
             raise ValueError('Feature branch is already claimed: ' + branch)
