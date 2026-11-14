@@ -397,7 +397,7 @@ workflow = Workflow(
                           params=(Parameter('--summary', 'Delivered behavior and evidence'),)),
                    Option('cancel', Workflow.FINISHED, 'Cancel for wrong feature scope, incomplete Git/version infrastructure, or refactoring beyond the allowed edit budget; preserve or commit edits first.', verdict,
                           params=(Parameter('--reason', 'Concrete blocker preventing this feature'),)),)),
-    State('review', REVIEW_PROMPT + '\n\nAnswer this issue’s selected questions from the shared delegation document.',
+    State('review', REVIEW_PROMPT,
           precheck=observed, owner=owner('reviewer'), view=review_view, options=(
               Option('approve', 'approval', 'Approve the revision; manual config waits for outer approval.', verdict,
                      params=(Parameter('--finding', 'Review answers and evidence'),)),

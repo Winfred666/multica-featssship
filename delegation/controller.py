@@ -173,10 +173,8 @@ def dispatch_item(context, request, record, index):
         cli('issue', 'label', 'add', child['id'], label['id'])
     link_config(child['id'], {**context['reference'], 'index': index}, DELEGATION_KEY)
     description = (request['request'] + '\n\nScope: ' + request['scope'] +
-                   '\n\nUse the prepared feature worktree: ' + str(worktree) + '\n\nFollow the verification guidance in the project description.\n\n' +
-                   entry_command('multica-featssship-develop-review') + '\n\nMAIN selected branch: ' + branch +
-                   '. Developer and Reviewer use this existing branch in the shared issue folder from the start; '
-                   'do not create a review checkout or switch branches.')
+                   '\n\nUse the prepared feature worktree: ' + str(worktree) + '\n\n' +
+                   entry_command('multica-featssship-develop-review'))
     cli('issue', 'update', child['id'], '--description-stdin', '--no-start', input=description)
     if child['status'] == 'backlog':
         cli('issue', 'status', child['id'], 'todo')

@@ -7,7 +7,7 @@ metadata: {sop: symbolic}
 Use this skill for delegated development and review. Developer implements and verifies;
 Reviewer reviews and ships through the CLI callbacks.
 
-Read the issue's request, scope and shared delegation questions, plus verification
+Read the issue's request and scope, plus verification
 guidance in the project description. Use the prepared issue worktree and MAIN-selected
 branch without creating another checkout or switching branches.
 
