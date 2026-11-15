@@ -1,4 +1,4 @@
-"""MAIN dispatches one human-approved JSON batch and resumes each child."""
+"""MAIN drafts a batch; outer confirms dispatch or requests changes."""
 import json
 from pathlib import Path
 import shutil
@@ -15,9 +15,11 @@ FINISHED_INSTRUCTION = (SOP_DISPLAY_NAME + ' SoP finished, directly and silently
 
 FIELDS = {**dict.fromkeys(('name', 'request', 'direction', 'title', 'scope', 'github_issue', 'branch', 'parent_branch'), str),
           'manual': bool, 'sandbox': dict, 'questions': list}
-WAIT_OUTER = 'do not call SoP and end this turn if no outer confirmation or edition instruction.'
-PROMPT = ('Read current sub-issues list delegation config <file path>, edit JSON offline and upload '
-          'the version via refresh --config-file PATH. ' + WAIT_OUTER)
+DRAFT_PROMPT = ('Read the batch JSON at <file path>, apply the request offline, then publish '
+          'with refresh --config-file PATH.')
+OUTER_PROMPT = ('Outer decides in this issue/current thread: confirm dispatch or request batch changes. '
+                'The MAIN agent ID routes callbacks; it does not own the outer decision.')
+REPLY_GUIDANCE = 'Briefly explain the batch changes in this thread, then end this turn.'
 
 
 def save_progress(context):
@@ -25,7 +27,7 @@ def save_progress(context):
         '--value', json.dumps(context['record']), '--type', 'string')
 
 
-def publish(batch, context):
+def batch_config(batch, context):
     envelope = {'source': config_ref(context['main']), 'main_issue_id': context['issue_id'],
                 'dispatch_thread': context['record']['thread']}
     if (not isinstance(batch, dict) or set(batch) - {'issues', *envelope}
@@ -35,9 +37,14 @@ def publish(batch, context):
     if any(not isinstance(item, dict) or set(item) - set(FIELDS)
            or any(not isinstance(value, FIELDS[key]) for key, value in item.items()) for item in batch['issues']):
         raise ValueError('Each issues item accepts typed request fields: ' + ', '.join(FIELDS))
-    config = delegation_config(context['installed'], batch, **envelope)
-    write_config(context['reference'], config, context['args'].thread or envelope['dispatch_thread'], 'Config refreshed. Confirm or edit further ?')
-    context['record'] = {'thread': envelope['dispatch_thread'],
+    return delegation_config(context['installed'], batch, **envelope)
+
+
+def publish(batch, context):
+    config = batch_config(batch, context)
+    write_config(context['reference'], config, context['state']['reply_parent'])
+    link_config(context['issue_id'], context['reference'], DELEGATION_KEY)
+    context['record'] = {'thread': config['dispatch_thread'],
                          'draft_attachment_id': attachment(context['reference'])['id']}
     save_progress(context)
 
@@ -49,7 +56,10 @@ def configured(context):
         raise context['error']('wrong_agent', 'Use the configured MAIN and its native assignee.')
     context.update(main=main, installed=read_config(source), reference=config_ref(main, DELEGATION_KEY),
                    record=json.loads(main.get('metadata', {}).get(DISPATCH_KEY, '{}')))
-    if args.config is not None or not context['reference']:
+    state = context['state']
+    if args.thread:
+        state['reply_parent'] = args.thread
+    if (args.config is not None or not context['reference']) and not state.get('draft'):
         if context['reference'] and not (context['record'].get('dispatched') and args.thread and args.thread != context['record']['thread']):
             raise ValueError('Use refresh; a new batch needs a new --thread after full dispatch.')
         if not args.thread:
@@ -57,39 +67,65 @@ def configured(context):
         batch = json.loads(args.config) if args.config is not None else {'issues': [{}]}
         context.update(record={'thread': args.thread}, reference={
             'issue_id': main['id'], 'filename': 'featssship.delegation-' + str(uuid.uuid4()) + '.json'})
-        publish(batch, context)
-        link_config(main['id'], context['reference'], DELEGATION_KEY)
-        args.config, context['argv'] = None, []  # Recalls read the document, never the initial JSON.
-    path = download_config(context['reference'], tempfile.mkdtemp(prefix='featssship-delegation-'))
-    context.update(config=json.loads(path.read_text()), config_path=str(path),
-                   revision=attachment(context['reference'])['id'])
+        path = Path(tempfile.mkdtemp(prefix='featssship-delegation-')) / context['reference']['filename']
+        path.write_text(json.dumps(batch_config(batch, context), indent=2) + '\n')
+        state['draft'] = {'thread': args.thread, 'reference': context['reference'], 'path': str(path)}
+        args.config, context['argv'] = None, []
+    if draft := state.get('draft'):
+        context.update(record={'thread': draft['thread']}, reference=draft['reference'])
+        path = Path(draft['path'])
+    else:
+        path = download_config(context['reference'], tempfile.mkdtemp(prefix='featssship-delegation-'))
+        context['revision'] = attachment(context['reference'])['id']
+    context.update(config=json.loads(path.read_text()), config_path=str(path))
 
 
 def view(context):
-    return {'instruction': PROMPT.replace('<file path>', context['config_path'])}
+    return {'instruction': DRAFT_PROMPT.replace('<file path>', context['config_path']) +
+            ('\n\nRequested changes: ' + context['state']['change_request']
+             if context['state'].get('change_request') else '')}
+
+
+def outer_owner(context):
+    return {'issue_id': context['issue_id'], 'thread': context['state']['reply_parent'],
+            'id': context['main']['assignee_id'], 'content': '/note'}
+
+
+def outer_view(context):
+    row = attachment(context['reference'])
+    return {'instruction': OUTER_PROMPT + '\n\nReview [' + row['filename'] + '](' + row['markdown_url'] + ').'}
+
+
+def request_changes(args, context):
+    if any(item.get('issue_id') for item in context['record'].get('items', [])):
+        raise ValueError('Children exist; resume dispatch instead of editing this batch.')
+    context['state']['change_request'] = args.change_request
 
 
 def refresh(args, context):
     """```dot
     digraph refresh { node [shape=box]; read [label="Read offline JSON and validate issues"];
-        upload [label="Replace attachment; clear approval"]; read -> upload; }
+        upload [label="Publish batch attachment"]; read -> upload; }
     ```"""
     if any(item.get('issue_id') for item in context['record'].get('items', [])):
         raise ValueError('Children exist; resume dispatch instead of refreshing this batch.')
     publish(json.loads(Path(args.config_file).read_text()), context)
+    context['state'].pop('draft', None)
+    context['state'].pop('change_request', None)
     context['argv'] = []
     configured(context)
+    return {'this_round_reply_guidance': REPLY_GUIDANCE}
 
 
 def dispatch(args, context):
     """```dot
-    digraph dispatch { gate [label="Verify original human approval of current batch"];
-        items [label="Create/resume children and branches; skip successes"]; report [label="All dispatched: finish; partial failures: report and stay grilling"];
+    digraph dispatch { gate [label="Validate current batch revision and requests"];
+        items [label="Create/resume children and branches; skip successes"]; report [label="All dispatched: finish; partial failures: report and allow retry"];
         gate -> items -> report; }
     ```"""
     record, config = context['record'], context['config']
     if record['draft_attachment_id'] != context['revision']:
-        raise context['error']('invalid_input', 'Refresh and obtain human approval of the current batch first.')
+        raise context['error']('invalid_input', 'Refresh the current batch before dispatch.')
     batch = [request_config(config, context['installed'], index=i) for i in range(len(config['issues']))]
     for index, request in enumerate(batch):
         missing = [key for key in ('name', 'request', 'direction', 'scope') if not (request.get(key) or '').strip()]
@@ -182,11 +218,19 @@ def dispatch_item(context, request, record, index):
 
 
 workflow = Workflow(
-    State('grilling', PROMPT, initial=True, precheck=configured, view=view, options=(
-        Option('refresh', 'grilling', 'Validate and upload the whole offline JSON; clear approval.', refresh,
-               params=(Parameter('--config-file', 'Path to the complete batch JSON'),)),
-        Option('dispatch', FINISHED, 'Check human approval; dispatch all or stay grilling to retry.', dispatch),
-    )),
+    State('edit', DRAFT_PROMPT, initial=True, precheck=configured, view=view, preview=DRAFT_PROMPT,
+          owner=lambda context: {'id': context['main']['assignee_id'], 'name': 'MAIN'}),
+    State('outer_decide', OUTER_PROMPT, precheck=configured, view=outer_view,
+          preview=OUTER_PROMPT, owner=outer_owner),
+    Option('refresh', prompt='Validate and publish the whole offline batch for outer confirmation.', action=refresh,
+           this_round_reply_guidance_preview=REPLY_GUIDANCE,
+           params=(Parameter('--config-file', 'Path to the complete batch JSON'),)),
+    Option('confirm', prompt='Dispatch the batch; retry unfinished items without recreating children.', action=dispatch),
+    Option('request_changes', prompt='Request batch changes from MAIN.', action=request_changes,
+           params=(Parameter('--change-request', 'Changes to apply to the batch'),)),
+    edges=(('edit', 'refresh'), ('refresh', 'outer_decide'),
+           ('outer_decide', 'confirm'), ('confirm', FINISHED),
+           ('outer_decide', 'request_changes'), ('request_changes', 'edit')),
     params=(Parameter('--thread', 'Native trigger UUID; original request when starting a batch', required=False),
             Parameter('--config', 'Initial {"issues": [{}]} JSON; omit to resume', required=False)),
 )
