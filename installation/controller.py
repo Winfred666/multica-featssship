@@ -1,18 +1,15 @@
-"""Two-stage installation: edit on the installer, publish a shared master configuration."""
+"""Draft configuration, collect native outer confirmation and retain installation."""
 import json
 
-from featssship import WAIT_OUTER, attachment, cli, config_ref, link_config, merge_patch, read_config, write_config
+from featssship import cli, config_ref, link_config, merge_patch, read_config, write_config
 from sop import Option, Parameter, State, Workflow
 
 CACHE_VIEW = False
 
 from install import defaults, execute, update
 
-# TODO: Breaks the agent-as-middle-layer principle: the script cannot proactively
-# take over human interaction or end the turn, so it must ask the agent to exit.
-EDIT_DONE = 'Edit finished. ' + WAIT_OUTER
 PROMPT = ('Adjust the config to match the requested workflow. Keep what already fits. '
-          'Ask the human one question only if the context leaves something unclear. ' + WAIT_OUTER + ' ')
+          'Ask the human one question only if the context leaves something unclear. ')
 COMMENTS = ('Defaults: repository is the target Git URL, not the featssship source. '
             'Each directions entry owns name, scope (paths), Reviewer questions (string list), test_command and branch_prefix; '
             'replace the list to set all concurrent directions. Missing acceptance questions/test_command must be filled from context. '
@@ -30,7 +27,7 @@ def observed(context):
     if not reference:
         reference = {'issue_id': issue['id'], 'filename': 'featssship-config.json'}
         if not any(row['filename'] == reference['filename'] for row in issue.get('attachments', [])):
-            write_config(reference, defaults(issue), context['args'].thread, 'Edit or confirm.')
+            write_config(reference, defaults(issue), context['args'].thread)
         link_config(issue['id'], reference)
         issue['metadata']['featssship.config'] = reference
     context.update(config=read_config(reference), reference=reference, issue=issue)
@@ -39,79 +36,59 @@ def observed(context):
 
 
 def view(context):
-    return {'instruction': PROMPT + COMMENTS + '\n\nRead the latest configuration attachment: ' + json.dumps(context['reference'])}
+    return {'instruction': PROMPT + COMMENTS + '\n\nRead the latest configuration attachment: ' + json.dumps(context['reference']) +
+            '\nRequested changes: ' + context['state'].get('change_request', 'Prepare the initial configuration.')}
 
 
-def edit(args, context):
-    """```dot
-    digraph edit { node [shape=box]; patch [label="Merge JSON patch into current config"];
-        save [label="Publish master JSON attachment revision"];
-        publish [label="Attach JSON: edit or confirm; tell agent to exit"];
-        patch -> save -> publish; }
-    ```"""
+def outer_owner(context):
+    return {'issue_id': context['issue_id'], 'thread': context['state'].get('reply_parent'),
+            'id': context['issue']['assignee_id'], 'content': '/note'}
+
+
+def publish(args, context):
     patch = json.loads(args.patch)
     if not isinstance(patch, dict):
         raise context['error']('invalid_input', '--patch must be a JSON object.')
     if any(key.startswith('installed_') or key.endswith('_id') for key in patch):
         raise context['error']('invalid_input', 'Use role.id to select an agent; installed_* IDs are maintained by installation.')
     config = merge_patch(context['config'], patch)
-    row = write_config(context['reference'], config,
-                       args.thread or context['state'].get('reply_parent') or context['state'].get('comment_id'), 'Edit or confirm.')
-    context['state']['comment_id'] = row['id']
-    context['state']['draft_attachment_id'] = attachment(context['reference'])['id']
-    context['state'].pop('confirmed_comment_id', None)
-    context['config'] = config
-    args.patch = '{}'
-    context['argv'] = ['edit', '--patch', '{}']
-    return {'instruction': 'Configuration attached. Edit or confirm. ' + EDIT_DONE}
+    write_config(context['reference'], config, args.thread or context['state'].get('reply_parent'),
+                 context['state'].get('change_request', 'Initial configuration.'))
+    return {'this_round_reply_guidance': 'End this turn silently.'}
 
 
-def confirmed(args, context):
-    """```dot
-    digraph confirmed { node [shape=box]; check [label="Require human confirmation of latest config"];
-        install [label="Validate; create/reuse MAIN; set up roles and local skills"];
-        inject [label="Link MAIN to the master attachment; remove legacy description block"];
-        finish [label="Mark installer done"];
-        check -> install -> inject -> finish; }
-    ```"""
-    state, config = context['state'], context['config']
-    if not state.get('comment_id'):
-        raise context['error']('invalid_input', 'Publish the config, then wait for the human to reply confirm.')
-    if not state.get('confirmed_comment_id') or (args.thread and state['confirmed_comment_id'] != args.thread):
-        rows = cli('issue', 'comment', 'list', context['issue_id'], '--thread', args.thread or state['comment_id'], '--tail', '30')
-        draft = next((row for row in rows if row['id'] == state['comment_id']), None)
-        human = next((row for row in reversed(rows)
-                      if row['id'] == args.thread or (not args.thread and row.get('author_type') == 'member')), None)
-        if (not draft or not human or human.get('author_type') != 'member'
-                or human['content'].strip().casefold() != 'confirm'
-                or rows.index(human) <= rows.index(draft)
-                or state['draft_attachment_id'] != attachment(context['reference'])['id']):
-            raise context['error']('invalid_input', 'A human must reply confirm after the latest config in its thread.')
-        state['confirmed_comment_id'] = human['id']
-        context['save_state']()
-    execute(config, context['issue'], state, context['save_state'])
+def request_edit(args, context):
+    context['state']['change_request'] = args.change_request
+
+
+def confirm(args, context):
+    execute(context['config'], context['issue'], context['state'], context['save_state'])
     cli('issue', 'status', context['issue_id'], 'done')
 
 
 def refresh(args, context):
-    """```dot
-    digraph update { node [shape=box]; main [label="Retrieve saved MAIN; keep identity and delegation progress"];
-        deploy [label="Refresh local delegation and owned context only"];
-        main -> deploy; }
-    ```"""
     update(context['config'], context['issue'], context['state'])
 
 
 workflow = Workflow(
-    State('grilling', PROMPT, initial=True, precheck=observed, view=view, options=(
-        Option('edit', 'grilling', 'Update only the settings that need changing.', edit,
-               params=(Parameter('--patch', 'JSON merge patch for the settings to change'),)),
-        Option('confirmed', 'finished', 'After the human replies confirm, run confirmed to install.', confirmed),
-    )),
+    State('edit', PROMPT, initial=True, precheck=observed, view=view,
+          preview='Draft {reference}; requested changes: {change_request}.'),
+    Option('publish', 'Publish the configuration for outer confirmation; use {} if no edits are needed.', publish,
+           params=(Parameter('--patch', 'JSON merge patch for the settings to change'),)),
+    State('outer_decide', 'Confirm configuration.',
+          precheck=observed, owner=outer_owner),
+    Option('confirm', 'confirm', confirm),
+    Option('request_edit', 'edit', request_edit,
+           params=(Parameter('--change-request', 'Changes to make to the configuration'),)),
     State('finished', 'Installation retained for the existing MAIN. On an update request, use the latest featssship '
           'source checkout or rebuilt installer and run update from the target repository. Otherwise, end this turn.',
-          precheck=observed, options=(
-        Option('update', 'finished', 'Refresh the saved MAIN’s local delegation and installation-managed context; keep in-flight dev-rev copies.', refresh),
-    )),
-    params=(Parameter('--thread', 'Agent-only: native trigger comment (optional); confirmation is found automatically', required=False),),
+          precheck=observed),
+    Option('update', 'Refresh the saved MAIN’s local delegation and installation-managed context; keep in-flight dev-rev copies.', refresh),
+    edges=(
+        ('edit', 'publish'), ('publish', 'outer_decide'),
+        ('outer_decide', 'confirm'), ('confirm', 'finished'),
+        ('outer_decide', 'request_edit'), ('request_edit', 'edit'),
+        ('finished', 'update'), ('update', 'finished'),
+    ),
+    params=(Parameter('--thread', 'Native trigger comment (optional)', required=False),),
 )
