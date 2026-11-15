@@ -89,7 +89,8 @@ digraph develop_review {
   approval [shape=diamond, label="manual config?"];
   approve [label="Reviewer: auto-approved action"];
   manual_approve [label="manual_approve: wait for outer instruction"];
-  merge_result [shape=diamond, label="Merge conflict / rework?"];
+  merge_result [shape=diamond, label="Integration/publication error?"];
+  integration_error [label="Reviewer: quick judgment and recovery"];
   finished [label="finished: cleaned, pushed if approved, reported", peripheries=2];
   develop -> review [label="submit"];
   review -> develop [label="rework"];
@@ -102,7 +103,9 @@ digraph develop_review {
   develop -> finished [label="cancel: cleanup only"];
   review -> finished [label="cancel: cleanup only"];
   manual_approve -> finished [label="cancel: cleanup only; ONLY outer allowed"];
-  merge_result -> develop [label="rework"];
+  merge_result -> integration_error [label="error"];
+  integration_error -> approve [label="recovered: retry required checks"];
+  integration_error -> develop [label="Reviewer chooses rework"];
   merge_result -> finished [label="merged: cleanup then push automatically"];
 }
 ```
@@ -111,7 +114,8 @@ Both roles use the current issue folder and the same metadata record. The native
 agent ID guards each phase. MAIN's `name: tree-horizontal-more` plus installed
 `branch_prefix: feat/frontend` binds `feat/frontend/tree-horizontal-more` before dispatch.
 Developer owns only develop; Reviewer owns all subsequent states. Neither role names or creates the branch.
-Later actions reject another branch or repository; review and integration also reject a changed HEAD.
+Later actions reject another branch or repository; review rejects a changed submitted HEAD.
+Integration accepts the approved revision or its scripted rebase checkpoint, not unrelated source edits.
 Dispatch prepares the metadata-selected local branch and one issue-owned worktree.
 `manual` is a boolean inherited from installation and overridable per batch item.
 Only manual mode creates/pushes a remote feature branch; its first push leases
@@ -122,14 +126,15 @@ A manual config adds the manual label before the child starts. Review never
 creates a checkout or switches branches. Automated review approval hands the
 Reviewer the `final_approve` action; manual approval waits in `manual_approve` for
 human or MAIN input. Both states use `final_approve` to call the same `merge_approved`
-function. It checks the exact approved HEAD, merges/tests, and fast-forwards local
-main in its clean existing worktree (or atomically advances its unoccupied ref).
-No feature worktree changes branch. The merge-result diamond comes before terminal
-finished: conflicts return to develop with the unresolved merge preserved, for a
-resolution merge commit and another review. Success continues directly through
-local feature cleanup, parent push and MAIN delivery, then enters finished.
-A rejected push restores the local feature branch/worktree for rework. There is
-no reported state, final-state action or finish command.
+function. It checks the approved revision, rebases onto latest main, runs required
+checks and fast-forwards local main in its clean existing worktree (or atomically
+advances its unoccupied ref). A clean rebase hash change alone keeps the approval.
+No feature worktree changes branch. Integration errors, conflicts and rejected
+parent pushes stay with Reviewer for quick judgment and recovery; interrupted Git
+state is preserved and a rejected push restores the feature branch/worktree.
+Only Reviewer choosing rework returns to Developer for corrections, submission,
+review and any required outer approval. Success continues through local feature
+cleanup, parent push and MAIN delivery. There is no finish command.
 
 Cancellation is available in develop and review for scope, Git/version
 infrastructure or edit-budget blockers, and in manual_approve for outer

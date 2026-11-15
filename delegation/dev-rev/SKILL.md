@@ -16,10 +16,10 @@ The CLI discovers the repository-local skill.
 Pass `--thread <trigger UUID>` on comment-triggered calls and follow the returned callback.
 
 Keep one feature commit; amend corrections, never create merge commits. Reviewer
-rebases onto latest main before integration. A changed revision needs a fresh
-submission, review and any required outer approval. On REBASE CONFLICT, Developer
-resolves and stages in the retained worktree, runs `git rebase --continue`, and
-submits again.
+rebases onto latest main before integration and owns integration/publication recovery,
+including conflicts and main advancing. A clean rebase hash change alone is not source
+rework. Preserve required checks and actual review/approval gates. Only Reviewer choosing
+rework returns to Developer, who resolves any retained rebase, tests and submits again.
 
 Do not ask parent to arrange or authorize ordinary workflow transitions.
 

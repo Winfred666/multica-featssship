@@ -3,9 +3,6 @@ from pathlib import Path
 import os
 import json
 import re
-import subprocess
-from html import escape
-from urllib.parse import quote
 
 from featssship import ROUND_DONE, REWORK_DONE, check_repo, clean, cli, comment, feature_config, git, run, test
 from sop import Branch, Completed, Option, Parameter, State, Workflow
@@ -17,15 +14,11 @@ REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared f
                  'without source edits or tests. '
                  'Answer the selected review questions in --finding. Approve or return corrections.')
 
-INTEGRATION_PROMPT = ('Reviewer: quickly diagnose this integration failure, not a broad investigation. '
-                      'Choose environment repair or repo-originated defect/conflict rework. '
-                      'Within existing authorization, repair only out-of-repo/local environment or installed execution/path setup, '
-                      'never tracked product code or assertions. Never bypass failing required checks. '
-                      'Retry preserves existing approval only for the unchanged approved revision; '
-                      'changed revisions need submission, review and any required outer approval. '
-                      'For REBASE CONFLICT, renew/complete the unfinished table and include it in --finding on rework. '
-                      'Environment retry needs no completed table. '
-                      'Preserve interrupted Git/rebase state; do not abort or restart it blindly.')
+INTEGRATION_PROMPT = ('Reviewer: quickly judge and recover this integration/publication failure. '
+                      'Preserve interrupted Git/rebase state; do not abort or restart it blindly. '
+                      'Repair within existing authorization without editing tracked product code or bypassing required checks. '
+                      'Hash changes from a clean rebase alone do not require source rework. '
+                      'Choose rework only when Developer corrections are needed; retain submission, review and any required outer approval.')
 
 # TODO: break agent-as-middle-layer: the runtime should stop until superior input directly.
 MANUAL_WAIT = 'Auto review passed; wait for superior instruction. Directly and silently end this turn.'
@@ -49,14 +42,6 @@ def review_view(context):
 
 def integration_view(context):
     return {'instruction': INTEGRATION_PROMPT + '\n\n' + context['state']['integration_error']}
-
-
-def retry_integration(args, context):
-    repo, binding, state = Path.cwd(), context['binding'], context['state']
-    check_repo(repo, binding)
-    if git(repo, 'rev-parse', 'refs/heads/' + binding['branch']) != state['commit']:
-        return {'accepted': False, 'instruction': 'The approved revision changed. Choose rework for fresh submission, review and approval.'}
-    state.pop('integration_error', None)
 
 
 def observed(context):
@@ -110,6 +95,7 @@ def submit(args, context):
     if binding['manual']:
         git(repo, 'push', '--force-with-lease=' + ref + ':' + context['state'].get('commit', context['issue']['metadata'].get('git_base_commit', '')), 'origin', 'HEAD:' + ref)
     feature = git(repo, 'rev-parse', 'HEAD')
+    context['state'].pop('integrated', None)
     context['state'].update(commit=feature,
                             feature=feature_link(repo, binding, feature), diff=diff_report(repo, binding))
     cli('issue', 'status', context['issue_id'], 'in_review')
@@ -186,107 +172,32 @@ def retained_rebase(repo):
                  if (repo / git(repo, 'rev-parse', '--git-path', name)).is_dir()), None)
 
 
-def rebase_conflict_report(repo, binding, incoming, upstream, paths):
-    def commit(label, revision):
-        description = git(repo, 'log', '-1', '--format=%b', revision)
-        if not description:
-            description = git(repo, 'show', '--format=', '--shortstat', revision)
-        return f'{label}: {feature_link(repo, binding, revision)}' + ('<br>' + escape(' '.join(description.split())[:180]) if description else '')
-
-    def excerpt(lines):
-        return escape(' / '.join(lines[:3])[:240]).replace('|', '&#124;').replace('[', '&#91;').replace(']', '&#93;') or '∅'
-
-    def locate(original, blocks):
-        located = []
-        for block in blocks:
-            matches = [i + 1 for i in range(len(original) - len(block) + 1)
-                       if block and original[i:i + len(block)] == block]
-            located.append((block, matches[0] if len(matches) == 1 else None))
-        return located
-
-    def linked_excerpt(revision, path, located, fallback):
-        remote = binding['repository'].removesuffix('.git').replace('git@github.com:', 'https://github.com/').rstrip('/')
-        url = remote + '/blob/' + revision + '/' + quote(path)
-        cells = []
-        for block, start in located or [(fallback, None)]:
-            anchor = f'#L{start}-L{start + len(block) - 1}' if start else ''
-            cells.append(f'[{excerpt(block)}]({url}{anchor})' if block else '∅')
-        return '<br>'.join(cells)
-
-    rows = ['| File | Upstream line/range | Conflicting upstream source commit(s) | Upstream (main) excerpt | Incoming (feature) excerpt | Reviewer diagnosis |',
-            '| --- | --- | --- | --- | --- | --- |']
-    for path in paths[:3]:
-        blocks, original = {2: [], 3: []}, {2: [], 3: []}
-        side = None
-        file = repo / path
-        lines = file.read_text(errors='replace').splitlines() if file.is_file() else []
-        for line in lines:
-            marker = re.match(r'^(<{7,}|\|{7,}|={7,}|>{7,})(?: |$)', line)
-            if marker:
-                side = {'<': 2, '=': 3}.get(marker[1][0])
-                if side:
-                    blocks[side].append([])
-            elif side:
-                blocks[side][-1].append(line)
-        for entry in git(repo, 'ls-files', '-u', '--', path).splitlines():
-            metadata, _ = entry.split('\t', 1)
-            _, blob, stage = metadata.split()
-            if int(stage) in original:
-                content = subprocess.run(['git', '-C', str(repo), 'cat-file', 'blob', blob],
-                                         check=True, capture_output=True).stdout
-                original[int(stage)] = ([content[:32].hex()] if b'\0' in content else
-                                        content.decode(errors='replace').splitlines())
-        located = {stage: locate(original[stage], blocks[stage]) for stage in original}
-        ranges, sources = [], []
-        for block, start in located[2]:
-            if start:
-                ranges.append(f'L{start}-L{start + len(block) - 1}')
-                blame = git(repo, 'blame', '--line-porcelain', '-L', f'{start},+{len(block)}', upstream, '--', path)
-                sources += re.findall(r'^([0-9a-f]{40}) \d+ \d+', blame, re.M)
-            else:
-                ranges.append('pending')
-        provenance = '<br>'.join(feature_link(repo, binding, revision).replace('|', '&#124;')
-                                for revision in dict.fromkeys(sources))
-        if not ranges or 'pending' in ranges:
-            provenance += ('<br>' if provenance else '') + 'pending: Reviewer to locate source'
-        rows.append(f'| {escape(path).replace("|", "&#124;")} | {", ".join(ranges) or "pending"} | {provenance} | ' +
-                    linked_excerpt(upstream, path, located[2], original[2]) + ' | ' +
-                    linked_excerpt(incoming, path, located[3], original[3]) + ' | pending |')
-    return ('REBASE CONFLICT\n\n' + commit('Incoming feature commit', incoming) + '\n\n' +
-            commit('Upstream main snapshot', upstream) + '\n\nUnfinished table:\n\n' + '\n'.join(rows) +
-            '\n\nReviewer: renew/complete this table and include it in --finding when selecting rework. '
-            'Environment retry needs no completed table.')
-
-
 def merge_approved(args, context):
     """```dot
     digraph merge_approved { node [shape=box]; check [label="Reviewer: verify approved HEAD"];
         rebase [label="Rebase feature onto latest main; continue retained rebase"];
-        changed [shape=diamond, label="Conflict or changed revision?"];
-        rework [label="Developer: resolve if needed; resubmit for review"];
         finish [label="Test, advance main, clean up and push"];
         judge [label="Reviewer: quick-judge integration error"];
-        check -> rebase -> changed; changed -> rework [label="yes"];
-        rebase -> judge [label="error"];
-        changed -> finish [label="no"]; }
+        check -> rebase -> finish;
+        rebase -> judge [label="error"]; finish -> judge [label="error"]; }
     ```"""
     if context['phase'] == 'manual_approve':
         outer_confirmed(args, context)
     repo, binding, state = Path.cwd(), context['binding'], context['state']
-    commit = state['commit']
+    commit = state.get('integrated', state['commit'])
     try:
         check_repo(repo, binding)
         rebase = retained_rebase(repo)
         if rebase:
             if ((rebase / 'orig-head').read_text().strip() != commit or
                     (rebase / 'head-name').read_text().strip() != 'refs/heads/' + binding['branch']):
-                raise ValueError('The retained rebase does not belong to the approved revision and MAIN branch. Preserve it for Developer.')
+                raise ValueError('The retained rebase does not belong to the approved revision and MAIN branch. Preserve it for Reviewer judgment.')
         else:
             shared_repo(context)
             if git(repo, 'rev-parse', 'HEAD') != commit:
                 raise ValueError('Integrate the exact approved revision; changed code needs a new review.')
             test(repo, binding['test_command'])
-        if binding['manual'] and git(repo, 'ls-remote', 'origin', 'refs/heads/' + binding['branch']).split()[0] != commit:
+        if binding['manual'] and git(repo, 'ls-remote', 'origin', 'refs/heads/' + binding['branch']).split()[0] != state['commit']:
             raise ValueError('The remote feature branch changed after submission.')
         if rebase:
             git(repo, 'rebase', '--continue')
@@ -294,19 +205,13 @@ def merge_approved(args, context):
             git(repo, 'fetch', 'origin', binding['parent_branch'])
             upstream = git(repo, 'rev-parse', 'origin/' + binding['parent_branch'])
             git(repo, 'rebase', upstream)
-        if git(repo, 'rev-parse', 'HEAD') != commit:
-            cli('issue', 'status', context['issue_id'], 'in_progress')
-            return {'phase': 'develop', 'instruction': 'Rebased onto latest main. Submit the changed revision for fresh review and approval; keep one feature commit.'}
+        commit = git(repo, 'rev-parse', 'HEAD')
+        state.update(integrated=commit, feature=feature_link(repo, binding, commit), diff=diff_report(repo, binding))
         test(repo, binding['test_command'])
         advance_parent(repo, binding, commit)
-        state['integrated'] = commit
+        state.pop('integration_error', None)
     except ValueError as error:
         state['integration_error'] = 'Integration stopped: ' + str(error)
-        paths = [path for path in git(repo, 'diff', '--name-only', '--diff-filter=U', '-z').split('\0') if path]
-        rebase = retained_rebase(repo)
-        if rebase and paths:
-            state['integration_error'] = rebase_conflict_report(repo, binding, commit,
-                (rebase / 'onto').read_text().strip(), paths)
         return {'phase': 'integration_error'}
     return finish(context)
 
@@ -375,10 +280,10 @@ def finish(context, integrated=None):
             run('git', '--git-dir', str(common), 'push', *lease, 'origin', integrated + ':' + ref)
         except ValueError as error:
             checkout(context, common, integrated)
-            cli('issue', 'status', context['issue_id'], 'in_progress')
             if amending:
                 return {'phase': 'amending', 'instruction': 'Parent push failed; restored the amendment checkout. Resolve with outer and retry push without review. ' + str(error)}
-            return {'phase': 'develop', 'instruction': 'Parent push failed; restored the local branch/worktree for rework. Rebase onto the latest parent and submit for review again; keep one feature commit. ' + str(error)}
+            state['integration_error'] = 'Parent push failed; restored the local branch/worktree for Reviewer recovery. ' + str(error)
+            return {'phase': 'integration_error'}
         state['integrated'] = integrated
     parent = context['binding']['main_issue_id']
     receipt = comment(parent, note, binding['dispatch_thread'])
@@ -406,20 +311,20 @@ workflow = Workflow(
               Option('cancel', Workflow.FINISHED, 'Cancel for wrong scope, incomplete Git/version infrastructure or refactoring beyond the edit budget; script cleans locally without merging or pushing.', verdict,
                      params=(Parameter('--reason', 'Concrete cancellation blocker'),)))),
     Branch('approval', 'manual config?', {'manual': 'manual_approve', 'automatic': 'approve'}),
-    State('approve', 'Reviewer: automated review passed. Use final_approve to rebase onto latest main; changed revisions return for fresh review and approval.',
-          precheck=observed, owner=owner('reviewer'), options=(Option('final_approve', 'merge_result', 'Rebase approved work; changed revisions return for review, unchanged approval ships.', merge_approved),)),
+    State('approve', 'Reviewer: automated review passed. Use final_approve to rebase onto latest main and integrate; recover failures as Reviewer.',
+          precheck=observed, owner=owner('reviewer'), options=(Option('final_approve', 'merge_result', 'Rebase approved work, run required checks and ship.', merge_approved),)),
     State('manual_approve', MANUAL_WAIT, precheck=observed, owner=owner('reviewer'), options=(
         Option('rework', 'develop', 'Reviewer: return corrections to Developer without integration.', verdict,
                params=(Parameter('--finding', 'Review corrections or superior-requested rework'),)),
-        Option('final_approve', 'merge_result', 'ONLY outer allowed: rebase approved work; changed revisions need fresh review and approval.', merge_approved),
+        Option('final_approve', 'merge_result', 'ONLY outer allowed: rebase approved work, run required checks and ship.', merge_approved),
         Option('cancel', Workflow.FINISHED, 'ONLY outer allowed: cancel the feature and clean up without integration.', verdict,
                params=(Parameter('--reason', 'Superior cancellation reason'),)),
     )),
-    Branch('merge_result', 'Integration error / changed revision?', {'error': 'integration_error', 'rework': 'develop', 'merged': 'done'}),
+    Branch('merge_result', 'Integration/publication error?', {'error': 'integration_error', 'merged': 'done'}),
     State('integration_error', INTEGRATION_PROMPT, precheck=observed, view=integration_view, owner=owner('reviewer'), options=(
-        Option('environment_repaired', 'approve', 'Out-of-repo/environment repair completed: retry automatic approve with existing unchanged-revision approval.', retry_integration),
-        Option('rework', 'develop', 'Repo-originated defect/conflict: return to Developer through the existing submission and review gates; preserve interrupted Git state.', verdict,
-               params=(Parameter('--finding', 'Quick diagnosis and corrections; for REBASE CONFLICT include the renewed table'),)),
+        Option('environment_repaired', 'approve', 'Reviewer recovery completed: retry approved integration with required checks.'),
+        Option('rework', 'develop', 'Reviewer chooses source corrections: return to Developer through the existing submission and review gates; preserve interrupted Git state.', verdict,
+               params=(Parameter('--finding', 'Quick diagnosis and required Developer corrections'),)),
     )),
     State('done', FINAL_DONE + '; retain this SOP state. Amend only on an explicit outer request.',
           precheck=observed, view=done_view, owner=owner('developer'), options=(
