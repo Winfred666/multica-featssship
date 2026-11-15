@@ -1,6 +1,6 @@
 ---
 name: multica-featssship-installation
-description: Install after human confirmation; retain the existing MAIN for repo-local updates.
+description: Install after outer confirmation; retain the existing MAIN for repo-local updates.
 metadata: {sop: symbolic}
 ---
 
@@ -11,16 +11,20 @@ Entry reads the installer-owned `featssship-config.json` through its metadata
 reference. It creates defaults only when the document is absent. Installation
 retains ordinary state `finished` with only `update`; re-entry never starts another
 MAIN. Retries and updates use the saved MAIN issue ID.
-In grilling, update only what is needed for the requested workflow. Keep settings
-that already fit, and return to editing as needed. Ask one human question only
-when context leaves something unclear. Pass
-`--thread <trigger UUID>` on a comment-triggered invocation.
+In `edit`, draft only the settings needed for the requested workflow. Keep
+settings that already fit. Ask one human question only when context leaves
+something unclear. Pass `--thread <trigger UUID>` on a comment-triggered invocation.
+Use `publish --patch '<JSON merge patch>'` to attach the configuration and enter
+the native `outer_decide` questionnaire in this installation issue/current thread.
+Publish `{}` even when the initial configuration needs no edits. The attachment
+retains the change request; native ownership publishes the questionnaire and accepts
+its answer. End the publication turn silently.
 
-After edit, the script attaches tidy JSON in the existing thread and asks the
-human to edit or confirm. Download/read the newest attachment to inspect it. Directly and silently end this turn if outer confirmation has not been received yet; after confirmation, continue. The human only replies `confirm`; no command
-or UUID is needed. The agent then runs confirmed, which finds the reply automatically.
-Installation creates MAIN without a parent, subscribes CEO, and links MAIN
-to that same master document.
+Outer chooses `confirm` to execute installation directly, or `request_edit` with one
+`--change-request` to return to `edit` for agent drafting. Use the engine's questionnaire
+answers; no separate confirmation comment or agent confirmation command is needed.
+Installation validates the configuration, creates MAIN without a parent,
+subscribes CEO, and links MAIN to that same master document.
 MAIN continues independently. Skills deploy only to the target repository's `.agents/skills/`.
 
 For an update request, run `git -C /path/to/multica-featssship pull --ff-only`,

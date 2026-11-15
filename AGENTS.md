@@ -10,7 +10,7 @@ Declare global routing with native Workflow (source, destination) pairs and loca
 
 The first assigned prototype issue is explicitly authorized to develop and commit directly on `main`. It carries `dev` and `manual`; human review owns acceptance. Verify its repository and branch before editing. Report the prototype in its native issue and wait for human acceptance. Do not create a PR unless requested.
 
-Installation is a resumable README-guided script in its assigned installer issue. It creates an independent MAIN DEV: issue, derives workspace/project from the installer, and uses only grilling and finished states. Grilling updates only the settings needed for the requested workflow, keeps choices that already fit, and allows repeated edits. Ask a human question only when context cannot resolve uncertainty. Human confirmation gates all installation writes. Never search for a MAIN root or ask the human for an existing root UUID. Reuse the saved active MAIN/agent IDs on resumption. Root delegation is the only root SOP; Developer and Reviewer share one fixed feature skill; review questions resolve from the shared delegation. Build standalone repository-owned procedures and native Multica CLI actions. The product must not invoke system distribution, review or delivery SOP skills.
+Installation is a resumable README-guided script in its assigned installer issue. It creates an independent MAIN DEV: issue, derives workspace/project from the installer, and separates agent edit, native outer_decide and retained finished states. Edit updates only the settings needed for the requested workflow, keeps choices that already fit, and allows repeated edits. Ask a human question only when context cannot resolve uncertainty. Outer questionnaire confirmation gates installation. Never search for a MAIN root or ask the human for an existing root UUID. Reuse the saved active MAIN/agent IDs on resumption. Root delegation is the only root SOP; Developer and Reviewer share one fixed feature skill; review questions resolve from the shared delegation. Build standalone repository-owned procedures and native Multica CLI actions. The product must not invoke system distribution, review or delivery SOP skills.
 
 Developer and Reviewer have distinct native identities and separate contexts. Only develop belongs to Developer, who edits, tests and submits. All subsequent states belong to Reviewer, including approval, integration, push and completion. Retain one non-merge feature commit; amend corrections and continue any retained rebase. Reviewer reviews without editing source, returns corrections to Developer, and runs approved integration through the script. MAIN starts delegation in grilling with one issues-list batch document, refreshes it from an offline JSON file, waits for human confirmation, then dispatches and receives results. Preserve the original request, scope, selected review questions and review/rework loop.
 
@@ -31,8 +31,11 @@ Preserve existing MAIN issues. Deploy skills only to the target repository.
 Fixed script inputs come from JSON config; mutable execution checkpoints from issue metadata.
 Issue/project titles and descriptions are display only.
 Resolve settings through owner/filename references, never installation-parent ancestry.
-Do not add nested-issue hierarchy or rubric-style tests. After edit, attach
-tidy JSON, ask the human to edit or confirm, and tell the agent to directly and silently end this turn if outer confirmation has not been received yet.
+Do not add nested-issue hierarchy or rubric-style tests. Publish tidy JSON to
+enter the native outer questionnaire in the current installation issue/thread.
+Keep change context with the attachment; return only silent final-hop guidance,
+including initial publication. Outer confirms installation directly or requests
+edits with one change-request argument; do not inspect confirmation comments.
 
 The feature procedure stores one current record under
 `issue.metadata["sop.multica-featssship-develop-review"]`; completion removes only

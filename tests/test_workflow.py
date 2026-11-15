@@ -107,21 +107,10 @@ class WorkflowFixture(unittest.TestCase):
         result = self.call(MULTICA, 'sop', 'run', 'multica-featssship-installation', *args, env=env, ok=ok)
         return json.loads(result.stdout)
 
-    def installation_reply(self, content='confirm', *, author='member', parent=None):
-        db = self.db()
-        parent = parent or next(row['id'] for row in reversed(db['comments'])
-                                if row.get('attachments'))
-        row = {'id': str(uuid.uuid4()), 'issue_id': self.ids['installer'], 'parent_id': parent,
-               'author_type': author, 'author_id': str(uuid.uuid4()), 'content': content}
-        db['comments'].append(row)
-        self.db_path.write_text(json.dumps(db))
-        return row['id']
-
     def install(self):
         if self.installer()['status'] != 'finished':
-            self.installer('edit', '--patch', '{}')
-            self.installation_reply()
-            self.assertEqual(self.installer('confirmed')['status'], 'finished')
+            self.installer('publish', '--patch', '{}')
+            self.assertEqual(self.installer('confirm')['status'], 'finished')
 
     def test_standalone_bundles_and_packaged_installer(self):
         from packages import build
@@ -147,39 +136,10 @@ class WorkflowFixture(unittest.TestCase):
         config['developer']['id'] = config['reviewer']['id'] = self.ids['main']
         self.write_answers(config)
         self.installer()
-        self.installer('edit', '--patch', '{}')
-        reply = self.installation_reply()
-        result = self.installer('--thread', reply, 'confirmed', ok=False)
+        self.installer('publish', '--patch', '{}')
+        result = self.installer('confirm', ok=False)
         self.assertIn('distinct MAIN', result['error']['message'])
         self.assertEqual(len(self.db()['agents']), 1)
-
-    def test_install_edits_complete_config_then_requires_latest_human_confirmation(self):
-        seed = self.read_answers()
-        db = self.db()
-        del db['issues'][self.ids['installer']]['metadata'][CONFIG_KEY]
-        db['issues'][self.ids['installer']]['attachments'] = []
-        trigger = str(uuid.uuid4())
-        db['comments'].append({'id': trigger, 'issue_id': self.ids['installer'], 'parent_id': None,
-                              'author_type': 'member', 'author_id': 'human', 'content': 'Configure installation.'})
-        self.db_path.write_text(json.dumps(db))
-        self.assertEqual(self.installer('--thread', trigger)['status'], 'grilling')
-        self.assertEqual(self.read_answers()['repository'], '')
-        patch = {key: seed[key] for key in ('repository', 'directions')}
-        self.installer('edit', '--patch', json.dumps(patch))
-        self.assertEqual(self.read_answers()['directions'], seed['directions'])
-        self.assertIn('human must reply', self.installer('confirmed', ok=False)['error']['message'])
-        agent_reply = self.installation_reply(author='agent')
-        self.assertIn('human must reply', self.installer('--thread', agent_reply, 'confirmed', ok=False)['error']['message'])
-        old_reply = self.installation_reply()
-        self.installer('--thread', old_reply, 'edit', '--patch', '{"developer":{"name":"New Developer"}}')
-        self.assertIn('human must reply', self.installer('--thread', old_reply, 'confirmed', ok=False)['error']['message'])
-        before_calls = len(self.db()['calls'])
-        self.installer()
-        self.assertEqual(self.read_answers()['developer']['name'], 'New Developer')
-        self.assertFalse(any(call[:2] == ['agent', 'get'] for call in self.db()['calls'][before_calls:]))
-        self.installation_reply()
-        self.assertEqual(self.installer('confirmed')['status'], 'finished')
-        self.assertEqual(self.db()['issues'][self.ids['installer']]['status'], 'done')
 
     def test_install_preserves_project_context(self):
         db = self.db()

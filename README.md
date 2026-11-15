@@ -11,7 +11,8 @@ Requires Python 3.11+, Git and authenticated `multica` with `sop run` support.
    directions, runtime or model choices.
 2. The installer reads its saved master JSON, creating defaults only when absent.
    It asks one self-contained question only when something is uncertain.
-3. Download and review the attached JSON. Reply with changes or `confirm`.
+3. Download and review the attached JSON. In the questionnaire, choose `confirm`
+   to install or `request_edit` with a change request for the installer.
 4. After confirmation, installation creates an independent `MAIN DEV:` issue, sets up the
    agents, deploys repository-local skills to `.agents/skills/`, and subscribes CEO.
 

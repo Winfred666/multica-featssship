@@ -19,15 +19,17 @@ The CLI supplies the engine; each SKILL.md declares `metadata: {sop: symbolic}`.
 
 ## Shipping flow
 
-Installation has two states:
+Installation separates agent drafting, outer confirmation and retained installation:
 
 ```dot
 digraph installation {
   rankdir=LR; node [shape=box];
-  grilling [label="grilling: align config with the requested workflow"];
+  edit [label="edit: align config with the requested workflow"];
+  outer_decide [label="outer_decide: outer decides in this installation issue/current thread"];
   finished [label="finished: retain MAIN checkpoint; update only"];
-  grilling -> grilling [label="edit JSON merge patch; attach config; ask edit or confirm; end this turn silently if not outer-confirmed"];
-  grilling -> finished [label="confirmed by human: set up roles/local skills and create/reuse MAIN"];
+  edit -> outer_decide [label="publish JSON merge patch; attach config and change context; end turn silently"];
+  outer_decide -> edit [label="request_edit: one change request for agent drafting"];
+  outer_decide -> finished [label="confirm: validate, set up roles/local skills and create/reuse MAIN"];
   finished -> finished [label="update: refresh saved MAIN's local delegation and owned context"];
 }
 ```
@@ -35,9 +37,17 @@ digraph installation {
 Defaults and field comments guide each edit toward the requested workflow. Keep
 settings that already fit, and edit again as needed. Ask one human question only
 when context leaves something unclear. Editing does not create
-roles, local skills or MAIN. Confirmation must be a human reply after the latest config
-comment. The human only replies `confirm`; the agent runs `confirmed` and the
-script finds that reply automatically. The JSON role key is `delegator`. The installer owns one logical master JSON
+roles, local skills or MAIN. Publishing enters the native addressed-owner questionnaire
+in the installation issue and current thread, including the first publication when
+no edits are needed. The attachment retains the change request. Native ownership
+publishes the questionnaire and accepts its answer; final-hop
+`this_round_reply_guidance` only ends the publication turn silently. Outer chooses
+`confirm` to run installation directly, or `request_edit --change-request` to return to
+`edit` for agent drafting. Native node names are unique, so the change-request
+action is distinct from the `edit` State. The addressed owner’s `issue_id` and
+`thread` select this installation issue/current thread; its required agent `id`
+transports callbacks and is not the outer decision-maker. The engine handles
+questionnaire answers; installation does not inspect comment authors, wording or ordering. The JSON role key is `delegator`. The installer owns one logical master JSON
 attachment containing installation settings and defaults. MAIN receives only
 its explicit owner/filename reference in `featssship.config`, not copied defaults
 or an installer-parent link. It subscribes CEO and runs independently after the
@@ -52,8 +62,8 @@ run it from the prepared issue worktree, without agent-installed skills.
 
 Attachment revisions temporarily replace unavailable native mutable deliverables.
 `featssship.py` isolates upload and authenticated download/read, with TODOs for native
-update/preview. Grilling publishes a confirmation prompt with each attachment revision in the
-existing thread; other revisions use an empty-rendering comment. Readers select the latest matching owner/filename. References
+update/preview. Draft publications carry the change request beside the attachment;
+other revisions render empty. The engine publishes the outer questionnaire after the final action. Readers select the latest matching owner/filename. References
 remain valid after edits, across issues. Serialize edits; immutable attachments
 provide no compare-and-swap. Old revisions remain history.
 See [README](../README.md#configuration) for editing.

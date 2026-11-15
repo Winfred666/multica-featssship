@@ -6,7 +6,6 @@ import shlex
 import subprocess
 import tempfile
 
-WAIT_OUTER = 'Directly and silently end this turn if outer confirmation has not been received yet.'
 CONFIG_KEY = 'featssship.config'
 DELEGATION_KEY = 'featssship.delegation'
 DISPATCH_KEY = 'featssship.dispatch'
@@ -55,7 +54,7 @@ def write_artifact(reference, content, parent=None, message=' '):
     with tempfile.TemporaryDirectory(prefix='.featssship-', dir=Path.cwd()) as directory:
         path = Path(directory) / reference['filename']
         path.write_text(content)
-        # Grilling supplies a confirmation prompt; other revisions render empty.
+        # The caller supplies change context; the engine publishes the questionnaire.
         words = ['issue', 'comment', 'add', reference['issue_id'], '--content', message, '--attachment', str(path)]
         if parent:
             words += ['--parent', parent]
