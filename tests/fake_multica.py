@@ -36,14 +36,6 @@ def main():
     elif args[:2] == ['project', 'update']:
         result = db['projects'][args[2]]
         result['description'] = option('description')
-    elif args[:2] == ['label', 'list']:
-        result = list({label['id']: label for issue in db['issues'].values() for label in issue.get('labels', [])}.values())
-    elif args[:2] == ['label', 'create']:
-        result = {'id': new(), 'name': option('name')}
-    elif args[:2] == ['issue', 'list']:
-        rows = list(db['issues'].values())
-        offset, limit = int(option('offset', '0')), int(option('limit', '50'))
-        result = {'issues': rows[offset:offset + limit], 'has_more': offset + limit < len(rows)}
     elif args[:2] == ['attachment', 'download']:
         row = db['attachments'][args[2]]
         destination = Path(option('output-dir')) / row['filename']
@@ -65,19 +57,12 @@ def main():
             metadata.pop(option('key'), None)
         else:
             raise ValueError('Unsupported metadata action')
-        size = len(json.dumps(metadata).encode())
-        if size > 8192:
-            raise ValueError('Issue metadata exceeds 8 KB')
-        db['peak_metadata_bytes'] = max(db.get('peak_metadata_bytes', 0), size)
     elif args[:2] == ['issue', 'create']:
         result = {'id': new(), 'title': option('title'), 'description': text('description'),
                   'project_id': option('project'), 'workspace_id': db['workspace_id'],
                   'parent_issue_id': option('parent'), 'assignee_id': option('assignee-id'),
                   'assignee_type': 'agent', 'labels': [], 'status': option('status'), 'metadata': {}}
         db['issues'][result['id']] = result
-    elif args[:3] == ['issue', 'label', 'add']:
-        result = db['issues'][args[3]]
-        result['labels'].append({'id': args[4], 'name': 'manual'})
     elif args[:2] == ['issue', 'update']:
         result = db['issues'][args[2]]
         if option('project'):
@@ -89,15 +74,8 @@ def main():
     elif args[:2] == ['issue', 'status']:
         result = db['issues'][args[2]]
         result.update(status=args[3], status_category=args[3])
-    elif args[:2] == ['issue', 'runs']:
-        result = [row for row in db.get('runs', []) if row['issue_id'] == args[2]]
     elif args[:3] == ['issue', 'comment', 'add']:
-        if args[3] == db.get('fail_delivery_issue'):
-            raise ValueError('Fixture delivery failed')
         parent = option('parent')
-        if os.environ.get('FEATSSSHIP_TRIGGER') and args[3] == os.environ['MULTICA_ISSUE_ID']:
-            if parent != os.environ['FEATSSSHIP_TRIGGER']:
-                raise ValueError('Native comment must reply under the triggering comment')
         result = {'id': new(), 'issue_id': args[3], 'parent_id': parent, 'content': text('content'),
                   'author_type': 'agent', 'author_id': os.environ.get('MULTICA_AGENT_ID'),
                   'source_task_id': os.environ.get('MULTICA_TASK_ID')}

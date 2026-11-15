@@ -55,15 +55,8 @@ Attachment revisions temporarily replace unavailable native mutable deliverables
 update/preview. Grilling publishes a confirmation prompt with each attachment revision in the
 existing thread; other revisions use an empty-rendering comment. Readers select the latest matching owner/filename. References
 remain valid after edits, across issues. Serialize edits; immutable attachments
-provide no compare-and-swap. Old revisions remain history. Defaults are created
-only when the master document is absent. Nothing caches JSON locally or in SoP
-state. Cached guidance contains routing text only, not rendered configuration.
-See [README](../README.md#configuration) for editing. Runtime resolution has no
-metadata fallback or ancestry lookup. Stale owned MAIN configuration can be
-deleted on upgrade; retain live execution checkpoints and unrelated data.
-
-The project description still owns verification guidance and repository/scope
-context, never selected review questions or installed identities.
+provide no compare-and-swap. Old revisions remain history.
+See [README](../README.md#configuration) for editing.
 The installer action graphs live in [its controller](../installation/controller.py).
 
 MAIN runs one sequential batch with `--thread <request UUID>` and optional
@@ -73,9 +66,6 @@ Dispatch requires the original member's confirmation or acceptance after that
 draft before creating children or branches. Partial failures retain checkpoints
 and retry in grilling without restarting successful children. Once a child exists,
 resume dispatch rather than refreshing.
-
-Children share the delegation attachment by item index; universal settings resolve
-from the installer master and verification commands from the project description.
 
 MAIN passes a short name;
 the configured direction prefix formats the feature branch. The child uses its
@@ -116,7 +106,7 @@ agent ID guards each phase. MAIN's `name: tree-horizontal-more` plus installed
 Developer owns only develop; Reviewer owns all subsequent states. Neither role names or creates the branch.
 Later actions reject another branch or repository; review rejects a changed submitted HEAD.
 Integration accepts the approved revision or its scripted rebase checkpoint, not unrelated source edits.
-Dispatch prepares the metadata-selected local branch and one issue-owned worktree.
+Dispatch prepares the selected local branch and one issue-owned worktree.
 `manual` is a boolean inherited from installation and overridable per batch item.
 Only manual mode creates/pushes a remote feature branch; its first push leases
 the reserved revision and corrections lease the prior submission. Automatic

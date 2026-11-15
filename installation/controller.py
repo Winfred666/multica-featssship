@@ -19,7 +19,6 @@ COMMENTS = ('Defaults: repository is the target Git URL, not the featssship sour
             'Roles default to distinct new agents using the installer runtime/model; set role.id to reuse one. '
             'Blank model inherits the runtime default. Installation creates one independent MAIN; retries and updates use its saved ID. CEO is subscribed. '
             'manual defaults to false; true requires superior approval after automated review and permits a remote feature branch. '
-            'installed_* agent IDs are reusable settings in the master attachment. '
             'Use a JSON merge patch: objects merge, arrays replace, null removes a field.')
 
 

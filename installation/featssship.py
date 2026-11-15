@@ -89,7 +89,8 @@ def request_config(batch, installed=None, *, index):
     result = {key: installed[key] for key in ('repository', 'sandbox') if key in installed}
     result.update(parent_branch=installed.get('parent_branch', 'main'), manual=installed.get('manual', False),
                   **{role + '_id': installed.get('installed_' + role + '_id') for role in ('delegator', 'developer', 'reviewer')},
-                  direction=name, scope=selected.get('scope', ''), questions=selected.get('questions', []))
+                  direction=name, scope=selected.get('scope', ''), test_command=selected.get('test_command', ''),
+                  questions=selected.get('questions', []))
     result.update(config)
     if selected and result.get('name'):
         result.setdefault('branch', feature_branch(selected, result['name']))
@@ -112,14 +113,9 @@ def feature_config(issue):
     if not reference:
         raise ValueError('MAIN must link the delegation configuration before development.')
     config = request_config(read_config(reference), index=reference['index'])
-    name = config['direction']
-    project = cli('project', 'get', issue['project_id'])
-    section = re.search(r'<!-- featssship:installation -->(.*?)<!-- /featssship:installation -->',
-                        project.get('description', ''), re.S)
-    command = re.search(r'^- ' + re.escape(name) + r':.*\n  Test: `(.*)`$', section[1] if section else '', re.M)
-    if not command or not command[1].strip():
-        raise ValueError('Project description needs verification guidance for direction ' + name)
-    return {**config, 'test_command': command[1]}
+    if not config['test_command'].strip():
+        raise ValueError('Installation config needs a test_command for direction ' + str(config['direction']))
+    return config
 
 
 def run(*words, cwd=None, input=None):

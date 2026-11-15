@@ -2,7 +2,6 @@
 from pathlib import Path
 import os
 import json
-import re
 
 from featssship import ROUND_DONE, REWORK_DONE, check_repo, clean, cli, comment, feature_config, git, run, test
 from sop import Branch, Completed, Option, Parameter, State, Workflow
@@ -118,8 +117,7 @@ def final_note(context):
     if state.get('cancel_reason'):
         return '/note sub-issue CANCELLED: ' + state['cancel_reason']
     note = '/note sub-issue DONE: ' + state['feature'] + '.'
-    mirror = re.fullmatch(r'\[.+\]\((https://github\.com/[^)]+/issues/[0-9]+)\)', context['issue']['title'])
-    source = binding.get('github_issue') or (mirror[1] if mirror else None)
+    source = binding.get('github_issue')
     if source:
         issue = json.loads(run('gh', 'issue', 'view', source, '--json', 'state,title,url'))
         if issue['state'] == 'CLOSED':

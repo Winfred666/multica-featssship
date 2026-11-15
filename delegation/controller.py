@@ -6,7 +6,7 @@ import uuid
 import tempfile
 
 from featssship import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, config_ref, delegation_config, download_config, entry_command, git, has_manual, link_config, read_config, request_config, repo_root, write_config
-from github_issue import issue_link, mirror_title
+from github_issue import issue_link
 from sop import FINISHED, Option, Parameter, State, Workflow
 
 SOP_DISPLAY_NAME = 'multica-featssship-delegation'
@@ -35,8 +35,6 @@ def publish(batch, context):
     if any(not isinstance(item, dict) or set(item) - set(FIELDS)
            or any(not isinstance(value, FIELDS[key]) for key, value in item.items()) for item in batch['issues']):
         raise ValueError('Each issues item accepts typed request fields: ' + ', '.join(FIELDS))
-    for item in batch['issues']:
-        item.setdefault('manual', has_manual(context['main']) or context['installed'].get('manual', False))
     config = delegation_config(context['installed'], batch, **envelope)
     write_config(context['reference'], config, context['args'].thread or envelope['dispatch_thread'], 'Config refreshed. Confirm or edit further ?')
     context['record'] = {'thread': envelope['dispatch_thread'],
@@ -125,9 +123,9 @@ def dispatch_item(context, request, record, index):
             return
     branch = request['branch']
     title = request.get('title') or request['name']
-    url = issue_link(title, request.get('github_issue'))
+    url = issue_link(request.get('github_issue'))
     if url:
-        title = mirror_title(title, url)
+        title = f'[{title}]({url})'
     if not record.get('issue_id'):
         child = cli('issue', 'create', '--title', title, '--description-stdin', '--parent', context['issue_id'],
                     '--project', context['main']['project_id'], '--assignee-id', context['installed']['installed_developer_id'],
@@ -173,6 +171,7 @@ def dispatch_item(context, request, record, index):
         cli('issue', 'label', 'add', child['id'], label['id'])
     link_config(child['id'], {**context['reference'], 'index': index}, DELEGATION_KEY)
     description = (request['request'] + '\n\nScope: ' + request['scope'] +
+                   '\n\nTest: `' + request['test_command'] + '`' +
                    '\n\nUse the prepared feature worktree: ' + str(worktree) + '\n\n' +
                    entry_command('multica-featssship-develop-review'))
     cli('issue', 'update', child['id'], '--description-stdin', '--no-start', input=description)

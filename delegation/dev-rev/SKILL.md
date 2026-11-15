@@ -7,9 +7,8 @@ metadata: {sop: symbolic}
 Use this skill for delegated development and review. Developer implements and verifies;
 Reviewer reviews and ships through the CLI callbacks.
 
-Read the issue's request and scope, plus verification
-guidance in the project description. Use the prepared issue worktree and MAIN-selected
-branch without creating another checkout or switching branches.
+Read the issue's request, selected scope and verification command. Use the prepared
+issue worktree and MAIN-selected branch without creating another checkout or switching branches.
 
 From the target repository root, run `multica sop run multica-featssship-develop-review`.
 The CLI discovers the repository-local skill.

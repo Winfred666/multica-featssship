@@ -143,10 +143,7 @@ def deploy(config, issue, root, *, include_feature=True):
         build('feature', destination / 'multica-featssship-develop-review')
     # Remove only the old installer's owned block, preserving project context.
     project_text = re.sub(re.escape(START) + r'.*?' + re.escape(END), '', project.get('description') or '', flags=re.S)
-    init_text = 'Repository: ' + config['repository'] + '\n\n' + '\n'.join(
-        f"- {d['name']}: {d['scope']}\n  Test: `{d['test_command']}`" for d in config['directions'])
-    project_text = section(project_text, init_text)
-    if project_text != project.get('description'):
+    if project_text != (project.get('description') or ''):
         cli('project', 'update', project['id'], '--description', project_text)
     root_text = section(root.get('description'),
                         'MAIN drafts and delegates features. '

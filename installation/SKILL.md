@@ -21,9 +21,7 @@ human to edit or confirm. Download/read the newest attachment to inspect it. Dir
 or UUID is needed. The agent then runs confirmed, which finds the reply automatically.
 Installation creates MAIN without a parent, subscribes CEO, and links MAIN
 to that same master document.
-MAIN continues independently. Settings and reusable agent IDs stay in the master attachment. Skills deploy only to the target repository's `.agents/skills/`. The retained SoP
-record saves the active MAIN ID immediately after creation for retries and updates;
-no local answers or cached settings exist.
+MAIN continues independently. Skills deploy only to the target repository's `.agents/skills/`.
 
 For an update request, run `git -C /path/to/multica-featssship pull --ff-only`,
 then `MULTICA_SOP_SKILL_ROOTS=/path/to/multica-featssship multica sop run multica-featssship-installation update` from the
@@ -32,5 +30,4 @@ the latest source before using `multica sop run multica-featssship-installation 
 the saved MAIN's delegation bundle and installation-owned entry/context references,
 then returns to `finished`. Preserve configuration, MAIN identity and delegation
 progress. Do not rebind platform skills or update existing dev-rev issues/packages.
-There is no legacy metadata fallback or automatic configuration merger.
 Follow returned errors; reconcile external writes before retrying.

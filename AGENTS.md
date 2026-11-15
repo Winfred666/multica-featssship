@@ -12,11 +12,11 @@ The first assigned prototype issue is explicitly authorized to develop and commi
 
 Installation is a resumable README-guided script in its assigned installer issue. It creates an independent MAIN DEV: issue, derives workspace/project from the installer, and uses only grilling and finished states. Grilling updates only the settings needed for the requested workflow, keeps choices that already fit, and allows repeated edits. Ask a human question only when context cannot resolve uncertainty. Human confirmation gates all installation writes. Never search for a MAIN root or ask the human for an existing root UUID. Reuse the saved active MAIN/agent IDs on resumption. Root delegation is the only root SOP; Developer and Reviewer share one fixed feature skill; review questions resolve from the shared delegation. Build standalone repository-owned procedures and native Multica CLI actions. The product must not invoke system distribution, review or delivery SOP skills.
 
-Developer and Reviewer have distinct native identities and separate contexts. Only develop belongs to Developer, who edits, tests and submits. All subsequent states belong to Reviewer, including approval, integration, push and completion. Retain one non-merge feature commit; amend corrections and continue any retained rebase. Reviewer reviews without editing source, returns corrections to Developer, and runs approved integration through the script. MAIN starts delegation in grilling with one issues-list batch document, refreshes it from an offline JSON file, waits for human confirmation, then dispatches and receives results. Keep settings in the installer-owned master JSON and dispatch-derived delegation attachments. Metadata stores only their references and necessary execution checkpoints. Preserve the original request, scope, selected review questions and review/rework loop.
+Developer and Reviewer have distinct native identities and separate contexts. Only develop belongs to Developer, who edits, tests and submits. All subsequent states belong to Reviewer, including approval, integration, push and completion. Retain one non-merge feature commit; amend corrections and continue any retained rebase. Reviewer reviews without editing source, returns corrections to Developer, and runs approved integration through the script. MAIN starts delegation in grilling with one issues-list batch document, refreshes it from an offline JSON file, waits for human confirmation, then dispatches and receives results. Preserve the original request, scope, selected review questions and review/rework loop.
 
 Use `Workflow`, `State`, `Option` and declared prechecks from the current template. Each feature issue owns one SoP metadata record shared by both agents. Reject the wrong agent ID for the current phase. Dispatch prepares one issue-owned Git worktree; both roles use it without a separate Reviewer checkout. Let Git own worktree identity; store no custom folder registry or task ID. Publish findings, verdicts and delivery evidence as comments.
 
-Keep tests under `tests/` small: installer resumption, delegation, branch/routing guards and one correction/integration smoke path. Use real workspace runs for native handoffs and HTML verification instead of duplicating the platform or generic runtime's test suite. Reuse settled evidence; run only checks affected by a change. Keep workspace evidence outside Git.
+Keep tests under `tests/` small. Use real workspace runs for native handoffs and HTML verification instead of duplicating the platform or generic runtime's test suite. Reuse settled evidence; run only checks affected by a change. Keep workspace evidence outside Git.
 
 MAIN passes a short feature name; the installed direction prefix formats its branch. Developer starts directly on the issue's existing named branch. Neither Developer nor Reviewer names, creates or switches branches. They retain that one branch and current issue folder through review and corrections; never check out a separate review branch. Manual review approval waits in manual_approve for outer approval; Reviewer may return corrections directly. Otherwise Reviewer continues to approve. Both approve and manual_approve call the same integration action. Integration/publication errors and conflicts stay Reviewer-owned; only Reviewer choosing rework returns to develop. A clean rebase hash change alone keeps approval, and required checks still run. Success deletes the owned local worktree/branch, pushes to the remote parent and completes delivery. No reported state or finish command. Cancellation from develop, review or manual_approve cleans locally and enters finished without integration. Keep local configuration, generated packages, logs and credentials untracked. Preserve shared services and unrelated agents, skills, issues and data. Use ponytail and concise native replies.
 
@@ -27,21 +27,17 @@ Use the [RSI creator](https://github.com/Winfred666/multica-RSI/blob/main/harnes
 for generic runtime protocol and renderer checks, not another copy here.
 
 Create MAIN without a parent, save its ID for same-cycle retries and subscribe CEO.
-Preserve existing MAIN issues. Deploy skills only to the target repository. The installer-owned
-`featssship-config.json` is the settings source: no local answers or cached config.
-MAIN links the master, then derives a delegation containing only request overrides.
-Dev-rev reads that document and resolves universal settings from its master reference. Keep reusable agent IDs
-in the master and execution checkpoints in metadata. Resolve settings through
-owner/filename references, never installation-parent ancestry. Do not add nested-issue hierarchy
-or rubric-style tests; keep verification focused on functional shipping behavior. Project context may include
-repository/scope/tests, never review questions or installed IDs. After edit, attach
+Preserve existing MAIN issues. Deploy skills only to the target repository.
+Fixed script inputs come from JSON config; mutable execution checkpoints from issue metadata.
+Issue/project titles and descriptions are display only.
+Resolve settings through owner/filename references, never installation-parent ancestry.
+Do not add nested-issue hierarchy or rubric-style tests. After edit, attach
 tidy JSON, ask the human to edit or confirm, and tell the agent to directly and silently end this turn if outer confirmation has not been received yet.
 
 The feature procedure stores one current record under
 `issue.metadata["sop.multica-featssship-develop-review"]`; completion removes only
 that key. `--help` must not advance state. Dispatch prepares a local feature branch/worktree; only manual mode reserves a remote branch.
 Only manual submissions push the feature branch, leasing its base or prior submitted commit.
-Verification commands come from the project description, not delegation config. Preserve
-these checks without adding a global lock. See [docs/workflow.md](docs/workflow.md)
+Preserve required checks without adding a global lock. See [docs/workflow.md](docs/workflow.md)
 for routing, handoff output and debug graph behavior. Run procedures with
 `multica sop run NAME`; `multica sop dev docs` describes the CLI-owned protocol.
