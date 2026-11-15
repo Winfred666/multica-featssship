@@ -96,7 +96,8 @@ State retry loops pause normally; no local graph adapter or renderer is used.
 Both roles use the current issue folder and the same metadata record. The native
 agent ID guards each phase. MAIN's `name: tree-horizontal-more` plus installed
 `branch_prefix: feat/frontend` binds `feat/frontend/tree-horizontal-more` before dispatch.
-Developer owns only develop; Reviewer owns all subsequent states. Neither role names or creates the branch.
+Developer owns develop; Reviewer owns review and integration recovery. Manual approval
+is addressed to MAIN's delegator. Neither role names or creates the branch.
 Later actions reject another branch or repository; review rejects a changed submitted HEAD.
 Integration accepts the approved revision or its scripted rebase checkpoint, not unrelated source edits.
 Dispatch prepares the selected local branch and one issue-owned worktree.
@@ -109,14 +110,16 @@ A manual config adds the manual label before the child starts. Review never
 creates a checkout or switches branches. Automated review approval passes through
 the manual-config diamond directly to the registered `final_approve` action; there
 is no automatic approval State.
-Manual approval waits in `manual_approve` for human or MAIN input, then uses the
-same action. The engine runs that action and the integration-result diamond
-until a State is reached. Integration checks the exact approved HEAD, rebases/tests,
+Manual approval addresses the engine questionnaire to the concrete delegator agent,
+using `main_issue_id` and `dispatch_thread` from the linked delegation JSON.
+Outer approval directly runs the same action; outer rework passes correction arguments
+straight to Developer through native handover. The engine runs the action and the
+integration-result diamond until a State is reached. Integration checks the exact approved HEAD, rebases/tests,
 and fast-forwards local main in its clean existing worktree (or atomically advances
 its unoccupied ref). A clean rebase hash change alone retains approval and updates
 the integrated revision. No feature worktree changes branch. The integration-result
 diamond routes all unsuccessful outcomes, including conflicts and rejected pushes,
-to Reviewer evaluation and recovery. Only Reviewer-selected `rework` returns to develop
+to Reviewer evaluation and recovery. `rework` selected by Reviewer or outer returns to develop
 for fresh submission, review and any required outer approval. Rebase conflicts retain
 the interrupted rebase; Reviewer chooses rework when Developer corrections are
 needed. Success continues directly through local feature cleanup, parent push and MAIN delivery, then retains `done`
@@ -145,10 +148,12 @@ as numeric context, not a complete feature explanation. No peer auto-posting,
 steering or handcrafted special-comment publication remains. The engine
 keeps the destination's ordinary guidance, ownership and later callbacks intact;
 only this invocation's output is masked. No local handoff hook posts or steers
-these comments. Manual review retains its ordered outer-approval checkpoint and
-returns wait guidance. It checks the reply actor and ordering, not confirm/approve
-keywords; the receiving agent interprets the superior’s instruction. Reports to
-MAIN remain receipt-only `/note` comments under the original dispatch thread, without mentions or steering. Failures remain errors.
+these comments. The final review action entering addressed approval returns minimal
+reply guidance to explain the changes and end the turn. The engine publishes and
+forwards its ordinary questionnaire; no separate wait comment, comment-scanning
+approval gate or responder restriction is added. Amendment still requires a separate
+explicit outer request. Completion reports to MAIN remain receipt-only `/note`
+comments under the original dispatch thread, without mentions or steering. Failures remain errors.
 Wrong-role calls exit nonzero on stderr without JSON or writes.
 
 Select `review` to inspect the request, scope and selected questions.

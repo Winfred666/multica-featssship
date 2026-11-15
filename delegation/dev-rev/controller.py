@@ -19,11 +19,16 @@ INTEGRATION_PROMPT = ('Reviewer: quickly judge and recover this integration/publ
                       'Hash changes from a clean rebase alone do not require source rework. '
                       'Choose rework only when Developer corrections are needed; retain submission, review and any required outer approval.')
 
-MANUAL_WAIT = 'Auto review passed; wait for superior instruction. Directly and silently end this turn.'
-
 
 def owner(role):
     return lambda context: cli('agent', 'get', context['binding'][role + '_id'])
+
+
+def outer_owner(context):
+    binding, recipient = context['binding'], owner('delegator')(context)
+    return {'issue_id': binding['main_issue_id'], 'thread': binding['dispatch_thread'],
+            'id': recipient['id'], 'content': f'[@{recipient["name"]}](mention://agent/{recipient["id"]}) '
+            'Review passed. Approve integration or return corrections to Developer.'}
 
 
 def handoff_guidance(context, role, message):
@@ -134,16 +139,13 @@ def final_note(context):
     return note + '\n\n' + state['diff']
 
 
-def outer_confirmed(args, context):
-    if context['phase'] == 'done' and not args.thread:
+def authorize_amendment(args, context):
+    if not args.thread:
         raise ValueError('Amend only on an explicit outer request; pass its comment UUID with --thread.')
-    rows = cli('issue', 'comment', 'list', context['issue_id'], '--thread', args.thread or context['state']['manual_comment_id'], '--tail', '30')
-    gate = next(row for row in rows if row['id'] == context['state']['manual_comment_id']) if context['phase'] == 'manual_approve' else None
-    outer = next((row for row in reversed(rows) if row['id'] == args.thread or
-                  (not args.thread and (row.get('author_type') == 'member' or row.get('author_id') == context['binding']['delegator_id']))), None)
-    if (not outer or (gate and rows.index(outer) <= rows.index(gate))
-            or not (outer.get('author_type') == 'member' or outer.get('author_id') == context['binding']['delegator_id'])):
-        raise ValueError('ONLY outer allowed: pass the superior instruction with --thread; manual approval must follow automated review.')
+    rows = cli('issue', 'comment', 'list', context['issue_id'], '--thread', args.thread, '--tail', '30')
+    outer = next((row for row in rows if row['id'] == args.thread), None)
+    if not outer or not (outer.get('author_type') == 'member' or outer.get('author_id') == context['binding']['delegator_id']):
+        raise ValueError('Amend only on an explicit outer request; pass the superior instruction with --thread.')
 
 
 def verdict(args, context):
@@ -153,8 +155,6 @@ def verdict(args, context):
         approve [label="Approve; Reviewer owns integration"];
         inspect -> rework [label="rework"]; inspect -> approve [label="approve"]; }
     ```"""
-    if context['phase'] == 'manual_approve' and args.event != 'rework':
-        outer_confirmed(args, context)
     if args.event == 'cancel':
         context['state']['cancel_reason'] = args.reason
         return finish(context)
@@ -162,9 +162,8 @@ def verdict(args, context):
     if not (context['phase'] in ('manual_approve', 'integration_error') and args.event == 'rework') and git(shared_repo(context), 'rev-parse', 'HEAD') != state['commit']:
         raise ValueError('Review the exact submitted revision; changed code needs a new submission.')
     if args.event == 'approve' and context['phase'] == 'review' and binding['manual']:
-        row = comment(context['issue_id'], MANUAL_WAIT + '\n\nHuman or MAIN: reply with your instruction; no special wording is required.', args.thread)
-        state['manual_comment_id'] = row['id']
-        return {'this_round_reply_guidance': MANUAL_WAIT}
+        return {'this_round_reply_guidance': 'Briefly explain the reviewed changes. '
+                'The approval questionnaire goes to MAIN’s delegator; end this turn.'}
     if args.event == 'rework':
         if context['phase'] == 'integration_error':
             state.pop('integration_error', None)
@@ -188,8 +187,6 @@ def merge_approved(args, context):
         check -> rebase -> finish;
         rebase -> judge [label="error"]; finish -> judge [label="error"]; }
     ```"""
-    if context['phase'] == 'manual_approve':
-        outer_confirmed(args, context)
     repo, binding, state = Path.cwd(), context['binding'], context['state']
     commit = state.get('integrated', state['commit'])
     try:
@@ -246,7 +243,7 @@ def done_view(context):
 
 
 def amend(args, context):
-    outer_confirmed(args, context)
+    authorize_amendment(args, context)
     repo = Path.cwd()
     check_repo(repo, context['binding'])
     common = Path(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'))
@@ -303,24 +300,25 @@ def finish(context, integrated=None):
 workflow = Workflow(
     State('develop', 'Developer: implement the issue request on MAIN’s feature branch in the current issue folder. '
           'Keep one feature commit; amend corrections, never merge. Continue any retained rebase, then test and submit.',
-          initial=True, precheck=observed, view=enter_develop, owner=owner('developer')),
+          initial=True, precheck=observed, view=enter_develop, owner=owner('developer'), preview='Developer: implement, test and submit the feature.'),
     State('review', REVIEW_PROMPT,
-          precheck=observed, owner=owner('reviewer'), view=review_view),
-    State('manual_approve', MANUAL_WAIT, precheck=observed, owner=owner('reviewer')),
-    State('integration_error', INTEGRATION_PROMPT, precheck=observed, view=integration_view, owner=owner('reviewer')),
+          precheck=observed, owner=owner('reviewer'), view=review_view, preview='Reviewer: inspect the submitted revision and selected review questions.'),
+    State('manual_approve', 'Approve integration?',
+          precheck=observed, owner=outer_owner),
+    State('integration_error', INTEGRATION_PROMPT, precheck=observed, view=integration_view, owner=owner('reviewer'), preview='Reviewer: diagnose integration failure and select recovery or rework.'),
     State('done', 'Feature commit already pushed to the parent branch. Use amend to revise that pushed feature.',
-          precheck=observed, view=done_view, owner=owner('developer')),
+          precheck=observed, view=done_view, owner=owner('developer'), preview='Feature pushed. Amend only on an explicit outer request.'),
     State('amending', 'Developer: amend the delivered commit in place, verify and interact briefly with outer as needed. No review loop; use push when ready.',
           precheck=observed, owner=owner('developer')),
     Option('submit', prompt='Test and request independent review; push only if manual.', action=submit,
            params=(Parameter('--summary', 'Delivered behavior and evidence'),)),
     Option('approve', prompt='Approve the revision; manual config waits for outer approval.', action=verdict,
            params=(Parameter('--finding', 'Review answers and evidence'),)),
-    Option('rework', prompt='Reviewer: return corrections to Developer for fresh submission, review and approval; preserve interrupted Git state.', action=verdict,
+    Option('rework', prompt='rework', action=verdict,
            params=(Parameter('--finding', 'Quick diagnosis and required Developer corrections'),)),
-    Option('cancel', prompt='Cancel for scope, Git/version infrastructure or edit-budget blockers; preserve or commit edits first. ONLY outer allowed from manual_approve.', action=verdict,
+    Option('cancel', prompt='cancel', action=verdict,
            params=(Parameter('--reason', 'Concrete cancellation blocker'),)),
-    Option('final_approve', prompt='Rebase approved work, run required checks and ship. ONLY outer allowed from manual_approve.', action=merge_approved),
+    Option('final_approve', prompt='approve', action=merge_approved),
     Option('environment_repaired', prompt='Reviewer recovery completed: retry approved integration with required checks.'),
     Option('amend', prompt='ONLY explicit outer request: recreate the issue checkout at the delivered commit and reopen the issue.', action=amend),
     Option('push', prompt='Publish the amended commit, clean up and mark the native issue done.', action=push),
