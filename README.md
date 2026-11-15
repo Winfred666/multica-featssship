@@ -50,10 +50,10 @@ from the latest source before running `multica sop run multica-featssship-instal
 
 Describe a batch of issues on MAIN. MAIN drafts one `{"issues":[...]}` config
 (default: one item). Download and edit the whole JSON, then use
-`refresh --config-file PATH` to replace it. Confirm or accept the latest draft in
-your own words. MAIN runs `dispatch` directly from grilling; it checks that human
-approval before creating children or branches. Partial batches stay in grilling
-and resume without recreating children.
+`refresh --config-file PATH` to publish it. The native questionnaire in the same
+issue thread lets outer confirm dispatch directly or submit one batch-change
+request to MAIN for drafting. Partial batches retry with `confirm` without
+recreating children; do not edit a batch once a child exists.
 Reviewer approves or requests corrections in the same feature issue, then owns
 approved integration, push and completion. Developer handles source corrections.
 
