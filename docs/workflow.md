@@ -70,12 +70,16 @@ See [README](../README.md#configuration) for editing.
 The installer action graphs live in [its controller](../installation/controller.py).
 
 MAIN runs one sequential batch with `--thread <request UUID>` and optional
-`--config '{"issues":[{}]}'` (one default item). Grilling shows a fresh JSON working
-copy; `refresh --config-file PATH` replaces the whole batch and invalidates approval.
-Dispatch requires the original member's confirmation or acceptance after that
-draft before creating children or branches. Partial failures retain checkpoints
-and retry in grilling without restarting successful children. Once a child exists,
-resume dispatch rather than refreshing.
+`--config '{"issues":[{}]}'` (one default item). Agent-owned `edit` shows a JSON
+working copy. `refresh --config-file PATH` validates and publishes the whole batch,
+including its first publication, then enters addressed-owner `outer_decide`. The final
+refresh action returns minimal `this_round_reply_guidance` for a brief change
+explanation; the engine publishes the native questionnaire in self
+`MULTICA_ISSUE_ID` and the current thread. Outer `confirm` directly dispatches;
+`request_changes --change-request TEXT` returns to MAIN drafting with that request. No comment
+confirmation scan or responder restriction is added. Partial failures retain
+checkpoints and retry with `confirm` without restarting successful children.
+Once a child exists, resume dispatch rather than editing or refreshing.
 
 MAIN passes a short name;
 the configured direction prefix formats the feature branch. The child uses its
@@ -161,6 +165,6 @@ settings, so enable `DEBUG` explicitly in older packages. No renderer service
 is required. Callbacks use `multica sop run NAME`; the CLI resolves repository-local
 skills before installed skills.
 
-Implementation note: delegation declares only `grilling`; runtime-owned `FINISHED`
+Implementation note: delegation declares `edit` and `outer_decide`; runtime-owned `FINISHED`
 is the ringed-circle target that deletes only its SOP key and emits callback-free
 exit guidance. See `multica sop dev docs` for completion modes.
