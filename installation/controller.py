@@ -42,7 +42,7 @@ def view(context):
 
 def outer_owner(context):
     return {'issue_id': context['issue_id'], 'thread': context['state'].get('reply_parent'),
-            'id': context['issue']['assignee_id'], 'content': '/note'}
+            'id': None, 'content': '/note'}
 
 
 def publish(args, context):

@@ -18,7 +18,6 @@ FIELDS = {**dict.fromkeys(('name', 'request', 'direction', 'title', 'scope', 'gi
 DRAFT_PROMPT = ('Read the batch JSON at <file path>, apply the request offline, then publish '
           'with refresh --config-file PATH.')
 OUTER_PROMPT = 'Confirm or edit.'
-
 REPLY_GUIDANCE = 'Briefly explain the batch changes in this thread, then end this turn.'
 
 
@@ -88,7 +87,7 @@ def view(context):
 
 def outer_owner(context):
     return {'issue_id': context['issue_id'], 'thread': context['state']['reply_parent'],
-            'id': context['main']['assignee_id'], 'content': '/note'}
+            'id': None, 'content': '/note'}
 
 
 def outer_view(context):

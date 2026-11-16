@@ -25,15 +25,15 @@ def owner(role):
 
 
 def outer_owner(context):
-    binding, recipient = context['binding'], owner('delegator')(context)
+    binding = context['binding']
     return {'issue_id': binding['main_issue_id'], 'thread': binding['dispatch_thread'],
-            'id': recipient['id'], 'content': f'[@{recipient["name"]}](mention://agent/{recipient["id"]}) '
-            'Review passed. Approve integration or return corrections to Developer.'}
+            'id': None, 'content': 'Review passed. Approve integration or return corrections to Developer.'}
 
 
 def handoff_guidance(context, role, message):
     recipient, state = owner(role)(context), context['state']
-    return ('Use multica-peer-mention-protocol for one reply in the current issue thread. '
+    return ('Post the following handoff with `multica issue comment add ' + context['issue_id'] +
+            ' --content-file <file>` in the current thread; do not put it only in the final response. '
             'Use the facts and links below without retrieving them again. '
             'Fill only <brief explanation> from the actual feature context, not file sizes. '
             'Then directly and silently end this turn; do not run the receiving role’s callback.\n\n'
