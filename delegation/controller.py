@@ -5,13 +5,12 @@ import shutil
 import uuid
 import tempfile
 
-from featssship import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, config_ref, delegation_config, download_config, entry_command, git, has_manual, link_config, read_config, request_config, repo_root, write_config
+from featssship import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, config_ref, delegation_config, download_config, entry_command, git, has_manual, link_config, read_config, request_config, repo_root, wake_agent, write_config
 from github_issue import issue_link
-from sop import FINISHED, Option, Parameter, State, Workflow
+from sop import FINISHED, Completed, Option, Parameter, State, Workflow
 
 SOP_DISPLAY_NAME = 'multica-featssship-delegation'
-FINISHED_INSTRUCTION = (SOP_DISPLAY_NAME + ' SoP finished, directly and silently end this turn Unless CEO ask for further step. '
-                        'Allow re-enter with initial command in SKILL.md next round.')
+FINISHED_INSTRUCTION = 'End this turn silently.'
 
 FIELDS = {**dict.fromkeys(('name', 'request', 'direction', 'title', 'scope', 'github_issue', 'branch', 'parent_branch'), str),
           'manual': bool, 'sandbox': dict, 'questions': list}
@@ -53,9 +52,12 @@ def configured(context):
     source = config_ref(main)
     if not source or main['workspace_id'] != context['workspace_id'] or main['assignee_id'] != context['agent_id']:
         raise context['error']('wrong_agent', 'Use the configured MAIN and its native assignee.')
-    context.update(main=main, installed=read_config(source), reference=config_ref(main, DELEGATION_KEY),
+    context.update(main=main, reference=config_ref(main, DELEGATION_KEY),
                    record=json.loads(main.get('metadata', {}).get(DISPATCH_KEY, '{}')))
     state = context['state']
+    if context['record'].get('dispatched') and args.config is None and not state.get('draft'):
+        raise Completed(FINISHED_INSTRUCTION, target=FINISHED)
+    context['installed'] = read_config(source)
     if args.thread:
         state['reply_parent'] = args.thread
     if (args.config is not None or not context['reference']) and not state.get('draft'):
@@ -99,6 +101,7 @@ def request_changes(args, context):
     if any(item.get('issue_id') for item in context['record'].get('items', [])):
         raise ValueError('Children exist; resume dispatch instead of editing this batch.')
     context['state']['change_request'] = args.change_request
+    wake_agent(context, context['main']['assignee_id'], 'Batch changes requested: ' + args.change_request)
 
 
 def refresh(args, context):
@@ -141,10 +144,8 @@ def dispatch(args, context):
             failures.append('issues[' + str(index) + '] ' + request['name'] + ': ' + str(error))
     record['dispatched'] = all(item.get('dispatched') for item in progress)
     save_progress(context)
-    children = [item['issue_id'] for item in progress if item.get('dispatched')]
-    return {'accepted': record['dispatched'], 'instruction':
-            'Dispatched ' + str(len(children)) + '/' + str(len(batch)) + ': ' + ', '.join(children) +
-            ('. Retry unfinished items.\n' + '\n'.join(failures) if failures else '; end this turn.')}
+    if failures:
+        raise ValueError('\n'.join(failures))
 
 
 def dispatch_item(context, request, record, index):

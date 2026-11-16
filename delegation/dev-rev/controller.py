@@ -3,7 +3,7 @@ from pathlib import Path
 import os
 import json
 
-from featssship import check_repo, clean, cli, comment, feature_config, git, run, test
+from featssship import check_repo, clean, cli, comment, feature_config, git, run, test, wake_agent
 from sop import Branch, Completed, Option, Parameter, State, Workflow
 
 CACHE_VIEW = False
@@ -54,6 +54,8 @@ def integration_view(context):
 def observed(context):
     issue = cli('issue', 'get', context['issue_id'])
     context.update(issue=issue, binding=feature_config(issue))
+    if context['args'].thread:
+        context['state']['reply_parent'] = context['args'].thread
     if issue['status'] == 'cancelled' or (issue['status'] == 'done' and context['phase'] not in ('done', 'amending')):
         raise Completed(FINAL_DONE, target=Workflow.FINISHED)
 
@@ -168,6 +170,9 @@ def verdict(args, context):
         if context['phase'] == 'integration_error':
             state.pop('integration_error', None)
         cli('issue', 'status', context['issue_id'], 'in_progress')
+        if context['phase'] == 'manual_approve':
+            wake_agent(context, binding['developer_id'], 'Corrections requested: ' + args.finding)
+            return {'this_round_reply_guidance': FINAL_DONE}
         return {'this_round_reply_guidance': handoff_guidance(context, 'developer', args.finding)}
     return {}
 
@@ -214,10 +219,13 @@ def merge_approved(args, context):
         test(repo, binding['test_command'])
         advance_parent(repo, binding, commit)
         state.pop('integration_error', None)
+        result = finish(context)
     except ValueError as error:
+        if context['phase'] == 'manual_approve':
+            raise
         state['integration_error'] = 'Integration stopped: ' + str(error)
-        return {'phase': 'integration_error'}
-    return finish(context)
+        result = {'phase': 'integration_error'}
+    return result
 
 
 def advance_parent(repo, binding, integrated, previous=None):
@@ -282,6 +290,8 @@ def finish(context, integrated=None):
             run('git', '--git-dir', str(common), 'push', *lease, 'origin', integrated + ':' + ref)
         except ValueError as error:
             checkout(context, common, integrated)
+            if context['phase'] == 'manual_approve':
+                raise
             if amending:
                 return {'phase': 'amending', 'instruction': 'Parent push failed; restored the amendment checkout. Resolve with outer and retry push without review. ' + str(error)}
             state['integration_error'] = 'Parent push failed; restored the local branch/worktree for Reviewer recovery. ' + str(error)

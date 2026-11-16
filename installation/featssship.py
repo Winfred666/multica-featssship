@@ -137,6 +137,14 @@ def mention(agent_id):
     return f'[@{name}](mention://agent/{agent_id})'
 
 
+def wake_agent(context, agent_id, message):
+    words = ['issue', 'comment', 'add', context['issue_id'], '--steer-active', '--content-stdin']
+    parent = getattr(context['args'], 'thread', None) or context['state'].get('reply_parent')
+    if parent:
+        words += ['--parent', parent]
+    return cli(*words, input=mention(agent_id) + ' ' + message + '\n\nResume the current SoP.')
+
+
 def repo_root():
     return Path(run('git', 'rev-parse', '--show-toplevel')).resolve()
 

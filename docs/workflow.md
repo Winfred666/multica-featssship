@@ -113,7 +113,7 @@ is no automatic approval State.
 Manual approval addresses the engine questionnaire to the concrete delegator agent,
 using `main_issue_id` and `dispatch_thread` from the linked delegation JSON.
 Outer approval directly runs the same action; outer rework passes correction arguments
-straight to Developer through native handover. The engine runs the action and the
+straight to Developer through a native mention/steer handoff. The engine runs the action and the
 integration-result diamond until a State is reached. Integration checks the exact approved HEAD, rebases/tests,
 and fast-forwards local main in its clean existing worktree (or atomically advances
 its unoccupied ref). A clean rebase hash change alone retains approval and updates
@@ -147,8 +147,8 @@ only a brief feature-wide explanation needs filling. Size-ranked files are label
 as numeric context, not a complete feature explanation. No peer auto-posting,
 steering or handcrafted special-comment publication remains. The engine
 keeps the destination's ordinary guidance, ownership and later callbacks intact;
-only this invocation's output is masked. No local handoff hook posts or steers
-these comments. The final review action entering addressed approval returns minimal
+only this invocation's output is masked. Only outer edit/rework callbacks wake agents.
+The final review action entering addressed approval returns minimal
 reply guidance to explain the changes and end the turn. The engine publishes and
 forwards its ordinary questionnaire; no separate wait comment, comment-scanning
 approval gate or responder restriction is added. Amendment still requires a separate

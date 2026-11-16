@@ -1,7 +1,7 @@
 """Draft configuration, collect native outer confirmation and retain installation."""
 import json
 
-from featssship import cli, config_ref, link_config, merge_patch, read_config, write_config
+from featssship import cli, config_ref, link_config, merge_patch, read_config, wake_agent, write_config
 from sop import Option, Parameter, State, Workflow
 
 CACHE_VIEW = False
@@ -59,6 +59,7 @@ def publish(args, context):
 
 def request_edit(args, context):
     context['state']['change_request'] = args.change_request
+    wake_agent(context, context['issue']['assignee_id'], 'Configuration changes requested: ' + args.change_request)
 
 
 def confirm(args, context):
