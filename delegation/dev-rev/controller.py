@@ -163,7 +163,7 @@ def verdict(args, context):
         raise ValueError('Review the exact submitted revision; changed code needs a new submission.')
     if args.event == 'approve' and context['phase'] == 'review' and binding['manual']:
         return {'this_round_reply_guidance': 'Briefly explain the reviewed changes. '
-                'The approval questionnaire goes to MAIN’s delegator; end this turn.'}
+                'The human approval questionnaire goes to MAIN’s dispatch thread; end this turn.'}
     if args.event == 'rework':
         if context['phase'] == 'integration_error':
             state.pop('integration_error', None)
