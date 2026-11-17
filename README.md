@@ -5,47 +5,43 @@ MAIN delegates; Developer implements and tests; Reviewer reviews and ships.
 ## Install
 
 Requires Python 3.11+, Git and authenticated `multica` with `sop run` support.
-
-1. Create an installation issue in the target Multica project and assign an
-   installer agent. Give it this README, the target repository and any known
-   directions, runtime or model choices.
-2. The installer reads its saved master JSON, creating defaults only when absent.
-   It asks one self-contained question only when something is uncertain.
-3. Download and review the attached JSON. In the questionnaire, choose `confirm`
-   to install or `request_edit` with a change request for the installer.
-4. After confirmation, installation creates an independent `MAIN DEV:` issue, sets up the
-   agents, deploys repository-local skills to `.agents/skills/`, and subscribes CEO.
+Assign an installation issue in the target project with the target repository,
+directions and known role/runtime choices. Review the saved JSON in the native
+questionnaire: `confirm` installs; `request_edit` returns to drafting.
+Confirmation creates/reuses independent MAIN, sets up roles/local skills and subscribes CEO.
 
 ### Installer agent
 
-Reuse an available featssship checkout. In the assigned installation issue,
-run from the **target repository checkout**:
+Build from a persistent featssship **source checkout** into the configured
+**target Git checkout** (replace the example paths below). The destination is
+`<target>/.agents/skills/multica-featssship-installation/`, including helpers and
+child bundles. Run the SoP from the target root, not the source or `/tmp`.
 
 ```bash
-MULTICA_SOP_SKILL_ROOTS=/path/to/multica-featssship multica sop run multica-featssship-installation
+cd /persistent/source/installation
+python3 -c "from packages import build; build('installation', '/persistent/target/.agents/skills/multica-featssship-installation')"
+cd /persistent/target
+multica sop list
+multica sop run multica-featssship-installation
 ```
 
-Follow the returned editing and confirmation guidance. On a comment trigger,
-pass `--thread <trigger UUID>`. Keep the source checkout during installation.
-Installation retains its existing MAIN checkpoint after completion and on retries.
-Do not search for or ask the human to create a separate MAIN issue.
+`sop list` must show that installed path. Follow returned guidance; on comment
+triggers pass `--thread <trigger UUID>`. Keep the target and bundle at these paths:
+callbacks use saved `workdir` and rediscover `.agents/skills/`, not shell-only
+`MULTICA_SOP_SKILL_ROOTS`. Every executing runtime needs access to these local files.
 
 ### Update
 
-In the same installation issue, fast-forward the featssship source checkout,
-then run from the **target repository checkout**:
+In the same installation issue, run `git -C /persistent/source pull --ff-only`,
+rebuild the installer using the command above, then run from the target root:
 
 ```bash
-git -C /path/to/multica-featssship pull --ff-only
-MULTICA_SOP_SKILL_ROOTS=/path/to/multica-featssship multica sop run multica-featssship-installation update
+multica sop run multica-featssship-installation update
 ```
 
-The retained `finished` state offers only `update` and returns there afterward.
-Update retrieves the saved MAIN and refreshes its local delegation bundle and
-installation-managed entry/context references. It preserves settings, MAIN identity
-and delegation progress; it does not rebind platform skills or change existing
-dev-rev issues or their local packages. A standalone installer must be rebuilt
-from the latest source before running `multica sop run multica-featssship-installation update`.
+`update` refreshes saved MAIN's delegation/context while keeping settings,
+MAIN identity, progress and in-flight dev-rev copies. Do not repeat initial setup
+or create another MAIN to repair a missing entrypoint.
 
 ## Shipping overview
 

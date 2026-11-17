@@ -11,11 +11,21 @@ delegation/                  MAIN: SKILL.md, controller.py, github_issue.py
 
 From `installation/`, use `packages.build('installation', destination)`,
 `packages.build('delegation', destination)` or `packages.build('feature', destination)`.
-The builder supplies shared helpers/config and validates with `multica sop dev validate DIRECTORY`.
-Installer packages include both child SoPs. Deployment builds directly into `.agents/skills/`,
-preserving config. Dispatch copies the dev-rev package into each prepared child worktree
-before starting it, without replacing an existing package. Updates leave in-flight copies untouched.
+[packages.build](../installation/packages.py) copies helpers/child bundles and validates with
+`multica sop dev validate DIRECTORY`. Build the installer at the persistent target's
+`.agents/skills/multica-featssship-installation/` using the [README commands](../README.md#installer-agent).
+[install.deploy](../installation/install.py) then installs MAIN/shipping bundles under `.agents/skills/`.
+Dispatch copies dev-rev into each child worktree; updates leave in-flight copies untouched.
 The CLI supplies the engine; each SKILL.md declares `metadata: {sop: symbolic}`.
+
+[DiscoverSOPs](https://github.com/Winfred666/multica-RSI/blob/396df1773ea3629146b3556fd87e4d2c85e868a7/server/internal/cli/sop.go#L43-L99)
+finds repository-local `.agents/skills/` from the command working directory.
+[save_state](https://github.com/Winfred666/multica-RSI/blob/396df1773ea3629146b3556fd87e4d2c85e868a7/server/internal/cli/sop/wrapper.py#L182-L187)
+saves that directory in `sop.<name>.workdir`;
+[runRemoteSOP](https://github.com/Winfred666/multica-RSI/blob/396df1773ea3629146b3556fd87e4d2c85e868a7/server/internal/daemon/remote_sop.go#L51-L78)
+reruns `multica sop run NAME` there with the daemon environment, not the caller's shell.
+Keep the recorded directory/bundles accessible to that runtime. Moving a bundle does
+not migrate `workdir`; fresh checkouts do not inherit these local files.
 
 ## Shipping flow
 
@@ -34,31 +44,17 @@ digraph installation {
 }
 ```
 
-Defaults and field comments guide each edit toward the requested workflow. Keep
-settings that already fit, and edit again as needed. Ask one human question only
-when context leaves something unclear. Editing does not create
-roles, local skills or MAIN. Publishing enters the native addressed-owner questionnaire
-in the installation issue and current thread, including the first publication when
-no edits are needed. The attachment retains the change request. Native ownership
-publishes the questionnaire and accepts its answer; final-hop
-`this_round_reply_guidance` only ends the publication turn silently. Outer chooses
-`confirm` to run installation directly, or `request_edit --change-request` to return to
-`edit` for agent drafting. Native node names are unique, so the change-request
-action is distinct from the `edit` State. The addressed owner’s `issue_id` and
-`thread` select this installation issue/current thread; its required agent `id`
-transports callbacks and is not the outer decision-maker. The engine handles
-questionnaire answers; installation does not inspect comment authors, wording or ordering. The JSON role key is `delegator`. The installer owns one logical master JSON
-attachment containing installation settings and defaults. MAIN receives only
-its explicit owner/filename reference in `featssship.config`, not copied defaults
-or an installer-parent link. It subscribes CEO and runs independently after the
-installer reaches retained ordinary state `finished`, whose sole option is `update`.
-Re-entry preserves settings and MAIN identity; its immediate MAIN checkpoint remains
-for retries and updates. [Update commands](../README.md#update) use the latest
-source without changing delegation progress, platform skill bindings or existing
-dev-rev issues and their local packages.
-Installation does not publish platform skills or change agent skill assignments.
-Dispatch and handoff prompts use `multica sop run NAME`. Both roles
-run it from the prepared issue worktree, without agent-installed skills.
+Installer `edit` drafts the saved JSON; ask one human question only for unresolved choices.
+`publish` attaches the config/change request and enters the native questionnaire in
+this installation issue/current thread, then ends the turn silently. Outer `confirm`
+executes installation; `request_edit --change-request` returns to drafting.
+Drafting creates no roles, local skills or MAIN. The JSON role key is `delegator`.
+Independent MAIN receives only the `featssship.config` owner/filename reference;
+CEO is subscribed. Saved MAIN/agent IDs survive retries. The retained `finished`
+state offers only [update](../README.md#update), preserving settings, MAIN identity,
+delegation progress and in-flight dev-rev copies. Installation does not publish
+platform skills or change agent skill assignments. MAIN runs from the persistent
+target root; shipping roles use their prepared issue worktree.
 
 Attachment revisions temporarily replace unavailable native mutable deliverables.
 `featssship.py` isolates upload and authenticated download/read, with TODOs for native
