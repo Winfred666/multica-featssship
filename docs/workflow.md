@@ -3,10 +3,12 @@
 ## Source layout and packages
 
 ```text
-installation/                Installer: SKILL.md, controller.py, install.py, packages.py
-  featssship.py, config.json  Shared helpers and DEBUG default
-delegation/                  MAIN: SKILL.md, controller.py, github_issue.py
-  dev-rev/                   Developer–Reviewer: SKILL.md, controller.py
+installation/                  Installer and shared config/CLI helpers
+delegation/common/             Install-time router, shared batch drafting and GitHub links
+delegation/normal/             Normal delegation controller and SKILL.md
+  dev-rev/                     Unchanged shipping procedure/controller
+delegation/split/              Experiment delegation controller and SKILL.md
+  devrev_split/                Reviewer-owned procedure and canonical score adapter
 ```
 
 From `installation/`, use `packages.build('installation', destination)`,
@@ -16,6 +18,7 @@ From `installation/`, use `packages.build('installation', destination)`,
 `.agents/skills/multica-featssship-installation/` using the [README commands](../README.md#installer-agent).
 [install.deploy](../installation/install.py) then installs MAIN/shipping bundles under `.agents/skills/`.
 Dispatch copies dev-rev into each child worktree; updates leave in-flight copies untouched.
+Split counterparts are `split-delegation` and `split-feature`; `delegation/common/router.py` selects the pair at installation/update.
 The CLI supplies the engine; each SKILL.md declares `metadata: {sop: symbolic}`.
 
 [DiscoverSOPs](https://github.com/Winfred666/multica-RSI/blob/396df1773ea3629146b3556fd87e4d2c85e868a7/server/internal/cli/sop.go#L43-L99)
@@ -79,7 +82,7 @@ Once a child exists, resume dispatch rather than editing or refreshing.
 
 MAIN passes a short name;
 the configured direction prefix formats the feature branch. The child uses its
-prepared issue worktree for one shared [procedure](../delegation/dev-rev/controller.py).
+prepared issue worktree for one shared [procedure](../delegation/normal/dev-rev/controller.py).
 
 The controller registers each action once and binds routing with native
 `Workflow(edges=((source, destination), ...))` pairs as the sole topology.
@@ -162,10 +165,134 @@ The HTML graph comes from `Workflow`; action docstrings explain local logic.
 During native runs, each state change or completion publishes an HTML graph
 highlighting the actual resulting state. Selecting a node only inspects its
 guidance; it does not advance the workflow. Package rebuilds retain existing
-settings, so enable `DEBUG` explicitly in older packages. No renderer service
+settings, including `DEBUG: false`, so enable `DEBUG` explicitly in older packages.
+The CLI uploads the config and graph as independent artifacts, soft-linked via
+issue metadata `independent_artifacts`, not ordinary issue-owned attachments.
+The graph updates on state changes/completion, not every recall. Publication
+failures are written to stderr and do not by themselves fail the SoP. No renderer service
 is required. Callbacks use `multica sop run NAME`; the CLI resolves repository-local
 skills before installed skills.
 
 Implementation note: delegation declares `edit` and `outer_decide`; runtime-owned `FINISHED`
 is the ringed-circle target that deletes only its SOP key and emits callback-free
 exit guidance. See `multica sop dev docs` for completion modes.
+
+## Split experiment flow
+
+```text
+MAIN: split delegation (same native batch confirmation)
+  -> Reviewer exp issue: ready -> prepare -> develop (addressed to Developer)
+       -> Developer exp issue: build variant, attach/update image and answer candidate_ready
+          (commit, summary, committed pipeline file, visual image attachment ID)
+     -> review -> submit(--review) [evaluate once, validate JSON, post to MAIN] -> finished
+```
+
+Reviewer retains the SoP record and identity throughout. The native engine
+publishes the questionnaire in Reviewer's issue and forwards its link/agent
+mention to the Developer issue. Developer follows that question's `!sop-remote`
+answer instructions, not `sop run`. The engine executes the callback under the
+owning Reviewer task; Developer never receives a Reviewer credential.
+MAIN prepares a Reviewer thread and passes it in the issue's `--thread` command;
+Reviewer prepares a Developer thread for the addressed questionnaire. The
+Developer callback wakes Reviewer in the saved Reviewer thread, not the
+Developer issue's trigger thread.
+The Reviewer submit action enters terminal `finished`, which clears native SoP
+state. It first marks both issues `in_review`, not `done`, and saves the public
+`featssship.experiment_submitted` receipt. That receipt prevents another evaluation
+even if the issue is reopened. Acceptance remains outside
+the experiment. Publication retries before completion reuse the saved real score,
+not another evaluation. The review text is a required submit argument.
+
+The existing owner/filename/index config links resolve installation roles,
+directions, scope and questions. Developer receives the same public reference,
+not a copy containing hidden data. No evaluator path, inputs, command output or
+credential is published in those attachments, comments, candidate worktrees or
+SoP state. Public direction `test_command` must be `evaluate.py`; no shared
+shell command is executed for scoring. Existing normal test commands are unchanged.
+
+The fixed minimal split context is `delegation/split/PROJECT.md`. Installation
+injects it into its owned project-description block only for that selected bundle,
+without replacing unrelated project context. Experiment issue descriptions retain
+it too. It encourages an ontology module dictionary and a pipeline of connected
+modules; every Reviewer experiment names its variant using the delegated name.
+Developer commits its detailed local pipeline file and attaches an initial visual
+image at development start, then updates that image as the pipeline changes.
+`this_round_reply_guidance` in prepare carries this Developer instruction, and
+the native addressed questionnaire forwards the same text to Developer. The
+candidate_ready callback rejects the base or an empty-change commit, requires a
+committed pipeline blob and an image attached or independently linked to the
+Developer issue, then notifies Reviewer. These checks prove artifacts exist, not
+that the work is relevant or complete; Reviewer must judge that. Reviewer sees the
+committed pipeline and visual before submitting. No module schema or framework
+is imposed. The installer question about develop_reviewer_split is optional
+edit-state guidance, not a prerequisite to publish or confirm.
+
+### Private evaluation boundary
+
+The current daemon task credential is **not** a filesystem sandbox. Distinct
+agents on the same Unix UID can read each other's known paths, including 0600
+files. A second folder/runtime ID or instructions alone cannot hide inputs.
+Scoring therefore fails closed until an operator provisions dedicated,
+unprivileged Developer and Reviewer Unix accounts and binds their existing
+agents to runtimes running under those accounts. Neither account may switch to
+the other, use sudo/docker/host-admin access, or share private mounts. Do not
+reconfigure agents automatically. Native task API scopes and issue visibility
+are not used to store secrets.
+
+On the Reviewer's host the operator supplies
+`/etc/multica-featssship/split/<reviewer-agent-UUID>.json`:
+
+```json
+{
+  "reviewer_uid": 1201,
+  "developer_uid": 1202,
+  "developer_id": "<actual Developer agent UUID>",
+  "reviewer_runtime_id": "<actual Reviewer runtime UUID>",
+  "developer_runtime_id": "<actual Developer runtime UUID>",
+  "evaluators": {"<installed direction>": "/private/reviewer/evaluation"}
+}
+```
+
+These are schema examples, not configured identities. The two policy directories
+and file must be root-owned and not group/world writable. Do not put hidden
+inputs in the policy. It binds actual runtime accounts, not their display names;
+the operator must verify and maintain those bindings. The adapter checks the
+calling UID, distinct non-root Developer UID, agent/runtime bindings and private
+directory ownership/mode. The CLI cannot attest a remote process's Unix UID;
+root-owned host policy is the trust anchor. The existing same-user runtime
+layout does not satisfy this policy and is not claimed to be isolated.
+
+Each evaluator directory is Reviewer-owned mode **0700**; Unix DAC denies the
+Developer account traversal regardless of group membership. It contains the
+real hidden inputs and trusted Reviewer-owned `evaluate.py`, not group/world
+writable. Keep the directory outside repositories and Developer-accessible
+mounts. No hidden assets are included in a built bundle. There is no connection
+to any deleted hidden-test repository.
+
+The canonical invocation, in that private directory, is:
+
+```text
+python3 evaluate.py --candidate /private/temporary/candidate.tar
+stdout: {"score": <finite JSON number>}
+```
+
+`score.py` exports the exact submitted Git commit as a tar archive, never the
+mutable working tree. `evaluate.py` is trusted evaluation code, not candidate
+code. It may inspect the archive directly. If it executes candidate code, the
+operator-provided evaluator must run that code in an OS sandbox with **no hidden
+files, Reviewer credentials, host access or network** and pass only public test
+inputs. The adapter does not execute candidate code or provide that sandbox.
+Do not enable executable candidates without that boundary. Reviewer runs the
+adapter inside the single `submit --review TEXT` action, which validates exactly one finite numeric
+`score`, excluding booleans and extra fields. Only that score is saved/published;
+private stdout/stderr and failures are withheld.
+
+The action saves `evaluation_attempted` before starting the canonical process.
+No retries after evaluator failure, malformed output or interruption. Missing
+policy/inputs can be supplied before the first attempt. An interrupted attempt
+without a saved score has no result; do not fabricate one. Delivery posts one
+`{"score": number}` JSON block plus required `--review` text, the variant, local
+pipeline path, visual image and candidate revision as
+a receipt-only `/note` in MAIN's original dispatch thread. It makes no merge,
+integration or push call. MAIN policy, source integration and human approval are
+not altered.

@@ -9,6 +9,7 @@ CACHE_VIEW = False
 from install import defaults, execute, update
 
 PROMPT = ('Adjust the config to match the requested workflow. Keep what already fits. '
+          'Consider whether to enable develop_reviewer_split (default false); ask explicitly only if the context leaves that choice unclear. '
           'Ask the human one question only if the context leaves something unclear. ')
 COMMENTS = ('Defaults: repository is the target Git URL, not the featssship source. '
             'Each directions entry owns name, scope (paths), Reviewer questions (string list), test_command and branch_prefix; '
@@ -18,6 +19,9 @@ COMMENTS = ('Defaults: repository is the target Git URL, not the featssship sour
             'Roles default to distinct new agents using the installer runtime/model; set role.id to reuse one. '
             'Blank model inherits the runtime default. Installation creates one independent MAIN; retries and updates use its saved ID. CEO is subscribed. '
             'manual defaults to false; true requires superior approval after automated review and permits a remote feature branch. '
+            'develop_reviewer_split defaults to false and selects separate experiment bundles at installation/update. '
+            'Split directions retain scope/questions; set test_command to evaluate.py, the private canonical score script, not a public shell command. '
+            'Never put hidden data, evaluator code or credentials in this shared attachment. '
             'Use a JSON merge patch: objects merge, arrays replace, null removes a field.')
 
 

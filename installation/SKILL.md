@@ -12,5 +12,7 @@ assigned installation issue; pass `--thread <trigger UUID>` on comment triggers.
 Keep the checkout/bundle at their saved paths for callbacks; no shell-only discovery.
 Follow returned drafting, publication and reply guidance. Outer confirms or requests
 edits through the native questionnaire; do not answer on outer's behalf.
+The optional edit-state question about `develop_reviewer_split` defaults to false.
+Keep hidden evaluation assets outside shared installation JSON.
 For updates, rebuild at the same location from current source, then run
 `multica sop run multica-featssship-installation update` in the same issue/target root.

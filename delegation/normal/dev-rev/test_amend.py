@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'installation'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'installation'))
 from featssship import git, run
 
 source = Path(__file__).with_name('controller.py').read_text()

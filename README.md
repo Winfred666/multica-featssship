@@ -9,6 +9,7 @@ Assign an installation issue in the target project with the target repository,
 directions and known role/runtime choices. Review the saved JSON in the native
 questionnaire: `confirm` installs; `request_edit` returns to drafting.
 Confirmation creates/reuses independent MAIN, sets up roles/local skills and subscribes CEO.
+The edit-state prompt may ask about `develop_reviewer_split` (default false); no extra gate is required.
 
 ### Installer agent
 
@@ -80,5 +81,28 @@ existing directions, scopes and questions.
 
 Draft publication writes config revisions; confirmation checkpoints role IDs in
 metadata without publishing config. Use the latest draft and serialize edits.
+
+### Split experiments
+
+Set installation `develop_reviewer_split: true` and confirm installation/update
+to select separate experiment bundles. The default `false` keeps the existing
+shipping workflow. Direction names, scopes and review questions still apply.
+For split directions, `test_command: "evaluate.py"` names the canonical private
+score script rather than a public shell test.
+
+MAIN creates a Reviewer `exp` child. Reviewer prepares a Developer `exp` child
+and sends its native development questionnaire there. Developer commits the
+candidate and answers `candidate_ready` with the local pipeline and visual image
+attachment; only Reviewer runs the split SoP. The fixed split project context
+encourages ontology module dictionaries, connected pipelines and named variants.
+Developer attaches an initial pipeline image and updates it as development proceeds.
+Reviewer's `submit --review TEXT` action evaluates once, validates
+`{"score": <finite number>}`, posts it plus review directly to MAIN and enters
+terminal `finished`. Experiments never merge, integrate or push to main. MAIN's next
+decision is outside this workflow; `manual` only controls normal shipping.
+
+Real evaluation code/data and a dedicated Unix-account boundary must be supplied
+before scoring. Different agent IDs or folders are not isolation. See the
+[private evaluation contract](docs/workflow.md#private-evaluation-boundary).
 
 感谢 [LINUX DO](https://linux.do/) 社区的支持。

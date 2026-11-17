@@ -1,11 +1,14 @@
 import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from urllib.parse import parse_qs, urlsplit
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +49,7 @@ class WorkflowFixture(unittest.TestCase):
         # Keep runtime error reporting and fixture CLI calls entirely local.
         self.env.pop('SYMBOLIC_SOP_ERROR_REPO', None)
         self.env.pop('MULTICA_TASK_ID', None)
+        self.env.pop('MULTICA_COMMENT_ID', None)
         for key in ('MULTICA_SERVER_URL', 'MULTICA_TOKEN'):
             self.env.pop(key, None)
         self.call('git', 'init', '--bare', '--initial-branch=main', str(self.remote), cwd=self.base)
@@ -64,7 +68,57 @@ class WorkflowFixture(unittest.TestCase):
         db['issues'][self.ids['installer']] = {'id': self.ids['installer'], 'workspace_id': self.ids['workspace'],
             'project_id': self.ids['project'], 'title': 'Install shipping', 'description': '',
             'assignee_id': self.ids['main'], 'assignee_type': 'agent', 'status': 'in_progress', 'labels': [], 'metadata': {}}
+        trigger = str(uuid.uuid4())
+        db['comments'].append({'id': trigger, 'issue_id': self.ids['installer'], 'parent_id': None,
+                               'content': 'Fixture installation request', 'author_type': 'member', 'revision': 1})
+        self.env['MULTICA_COMMENT_ID'] = trigger
         self.db_path.write_text(json.dumps(db))
+        fixture = self
+        class NativeTransport(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+            def do_GET(self):
+                url = urlsplit(self.path)
+                if url.path.startswith('/api/workspaces/'):
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(b'{"slug":"fixture"}')
+                    return
+                if not (url.path.startswith('/api/issues/') and url.path.endswith('/comments')):
+                    self.send_error(404)
+                    return
+                rows = [row for row in fixture.db()['comments'] if row['issue_id'] == url.path.split('/')[3]]
+                thread = parse_qs(url.query).get('thread', [None])[0]
+                if thread:
+                    index = {row['id']: row for row in rows}
+                    def root(row):
+                        while row.get('parent_id'):
+                            row = index[row['parent_id']]
+                        return row['id']
+                    rows = [row for row in rows if root(row) == root(index[thread])]
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(rows).encode())
+            def do_POST(self):
+                if not (self.path.startswith('/api/issues/') and self.path.endswith('/comments')):
+                    self.send_error(404)
+                    return
+                data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                db = fixture.db()
+                row = {'id': str(uuid.uuid4()), 'issue_id': self.path.split('/')[3], 'revision': 1, **data}
+                db['comments'].append(row)
+                fixture.db_path.write_text(json.dumps(db))
+                self.send_response(201)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(row).encode())
+        server = HTTPServer(('127.0.0.1', 0), NativeTransport)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.env.update(MULTICA_SERVER_URL='http://127.0.0.1:' + str(server.server_port), MULTICA_TOKEN='fixture')
         binaries = self.base / 'bin'
         binaries.mkdir()
         script = binaries / 'multica'
@@ -122,6 +176,84 @@ class WorkflowFixture(unittest.TestCase):
         if self.installer()['status'] != 'finished':
             self.installer('publish', '--patch', '{}')
             self.assertEqual(self.installer('confirm')['status'], 'finished')
+
+    def test_split_questionnaire_uses_child_threads_and_direction_developer(self):
+        config = self.read_answers()
+        direction_developer = str(uuid.uuid4())
+        config['develop_reviewer_split'] = True
+        config['directions'][0].update(developer_id=direction_developer, test_command='evaluate.py')
+        self.write_answers(config)
+        db = self.db()
+        db['agents'][direction_developer] = {'id': direction_developer, 'name': 'Direction Developer',
+            'runtime_id': self.ids['runtime'], 'workspace_id': self.ids['workspace']}
+        self.db_path.write_text(json.dumps(db))
+        self.install()
+        db = self.db()
+        main = next(row for row in db['issues'].values() if row['title'].startswith('MAIN DEV:'))
+        reviewer_id = config_ref(db['issues'][self.ids['installer']])['installed_reviewer_id']
+        thread = str(uuid.uuid4())
+        db['comments'].append({'id': thread, 'issue_id': main['id'], 'parent_id': None,
+                               'content': 'Experiment request', 'revision': 1})
+        self.db_path.write_text(json.dumps(db))
+        name = 'multica-featssship-' + self.ids['project'][:8]
+        env = {**self.env, 'MULTICA_ISSUE_ID': main['id'], 'MULTICA_AGENT_ID': main['assignee_id'],
+               'MULTICA_WORKSPACE_ID': self.ids['workspace'], 'MULTICA_COMMENT_ID': thread}
+        self.call(MULTICA, 'sop', 'run', name, '--thread', thread, '--config',
+                  json.dumps({'issues': [{'name': 'variant', 'request': 'Develop a variant.'}]}), env=env)
+        state = json.loads(self.db()['issues'][main['id']]['metadata']['sop.' + name])
+        self.call(MULTICA, 'sop', 'run', name, 'refresh', '--config-file', state['draft']['path'], env=env)
+        self.call(MULTICA, 'sop', 'run', name, 'confirm', env=env)
+        db = self.db()
+        review = next(row for row in db['issues'].values() if row.get('parent_issue_id') == main['id'])
+        review_thread = next(row['id'] for row in db['comments'] if row['issue_id'] == review['id'])
+        env.update(MULTICA_ISSUE_ID=review['id'], MULTICA_AGENT_ID=reviewer_id, MULTICA_COMMENT_ID='')
+        skill = 'multica-featssship-devrev-split'
+        self.call(MULTICA, 'sop', 'run', skill, '--thread', review_thread, env=env)
+        self.call(MULTICA, 'sop', 'run', skill, 'prepare', env=env)
+        db = self.db()
+        developer = next(row for row in db['issues'].values() if row.get('parent_issue_id') == review['id'])
+        state = json.loads(db['issues'][review['id']]['metadata']['sop.' + skill])
+        self.assertEqual(developer['assignee_id'], direction_developer)
+        self.assertEqual(state['owner']['issue_id'], developer['id'])
+        self.assertEqual(state['owner']['thread'], state['developer_thread'])
+        forwarded = next(row for row in db['comments'] if row['id'] == state['questionnaire']['forwarded_comment_id'])
+        self.assertEqual(forwarded['parent_id'], state['developer_thread'])
+        self.assertTrue(any(call[:2] == ['attachment', 'upload'] and '--independent' in call
+                            and call[2].endswith('multica-featssship-devrev-split-state.html')
+                            for call in db['calls']))
+        tree = Path(state['worktree'])
+        image, answer = str(uuid.uuid4()), str(uuid.uuid4())
+        db['attachments'][image] = {'id': image, 'content_type': 'image/png', 'markdown_url': '/image',
+                                    'issue_id': developer['id']}
+        db['comments'].append({'id': answer, 'issue_id': developer['id'], 'parent_id': forwarded['id'],
+                               'content': 'Candidate ready', 'revision': 1})
+        self.db_path.write_text(json.dumps(db))
+        env.update(MULTICA_ISSUE_ID=developer['id'], MULTICA_COMMENT_ID=answer)
+        def candidate(commit, pipeline, *, ok=True):
+            return self.call(MULTICA, 'sop', 'run', skill, 'candidate_ready', '--issue', review['id'],
+                             '--commit', commit, '--summary', 'Variant', '--pipeline', pipeline,
+                             '--visual-attachment', image, env=env, ok=ok)
+        base = self.call('git', 'rev-parse', 'HEAD', cwd=tree).stdout.strip()
+        self.assertIn('actual changes', json.loads(candidate(base, 'message.txt', ok=False).stdout)['error']['message'])
+        self.call('git', 'commit', '--allow-empty', '-m', 'Empty experiment', cwd=tree)
+        empty = self.call('git', 'rev-parse', 'HEAD', cwd=tree).stdout.strip()
+        self.assertIn('actual changes', json.loads(candidate(empty, 'message.txt', ok=False).stdout)['error']['message'])
+        (tree / 'pipeline.txt').write_text('source -> output\n')
+        self.call('git', 'add', 'pipeline.txt', cwd=tree)
+        self.call('git', 'commit', '-m', 'Experiment pipeline', cwd=tree)
+        commit = self.call('git', 'rev-parse', 'HEAD', cwd=tree).stdout.strip()
+        db = self.db()
+        db['attachments'][image]['issue_id'] = str(uuid.uuid4())
+        self.db_path.write_text(json.dumps(db))
+        self.assertIn('Developer issue', json.loads(candidate(commit, 'pipeline.txt', ok=False).stdout)['error']['message'])
+        db = self.db()
+        db['issues'][developer['id']]['metadata']['independent_artifacts'] = json.dumps([image])
+        self.db_path.write_text(json.dumps(db))
+        candidate(commit, 'pipeline.txt')
+        db = self.db()
+        wake = next(row for row in db['comments'] if row['issue_id'] == review['id'] and 'Candidate ready:' in row['content'])
+        self.assertEqual(wake['parent_id'], review_thread)
+        self.assertEqual(json.loads(db['issues'][review['id']]['metadata']['sop.' + skill])['status'], 'review')
 
     def test_dispatch_completion_help_and_reentry(self):
         from packages import build
