@@ -141,15 +141,6 @@ def final_note(context):
     return note + '\n\n' + state['diff']
 
 
-def authorize_amendment(args, context):
-    if not args.thread:
-        raise ValueError('Amend only on an explicit outer request; pass its comment UUID with --thread.')
-    rows = cli('issue', 'comment', 'list', context['issue_id'], '--thread', args.thread, '--tail', '30')
-    outer = next((row for row in rows if row['id'] == args.thread), None)
-    if not outer or not (outer.get('author_type') == 'member' or outer.get('author_id') == context['binding']['delegator_id']):
-        raise ValueError('Amend only on an explicit outer request; pass the superior instruction with --thread.')
-
-
 def verdict(args, context):
     """```dot
     digraph verdict { node [shape=box]; inspect [label="Read submitted revision"];
@@ -235,7 +226,7 @@ def advance_parent(repo, binding, integrated, previous=None):
     parents = [path for path in parents if git(path, 'rev-parse', '--is-inside-work-tree') == 'true']
     old = git(repo, 'for-each-ref', '--format=%(objectname)', ref)
     if previous and old not in (previous, integrated):
-        raise ValueError('The local parent advanced after delivery; ask outer before replacing it.')
+        raise ValueError('The local parent changed during publication; preserve it and retry against its latest tip.')
     if parents:
         clean(parents[0])
         command = ('reset', '--keep') if previous else ('merge', '--ff-only')
@@ -251,7 +242,6 @@ def done_view(context):
 
 
 def amend(args, context):
-    authorize_amendment(args, context)
     repo = Path.cwd()
     check_repo(repo, context['binding'])
     common = Path(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'))
@@ -260,17 +250,41 @@ def amend(args, context):
 
 
 def push(args, context):
-    repo, binding, state = shared_repo(context), context['binding'], context['state']
-    test(repo, binding['test_command'])
-    commit = git(repo, 'rev-parse', 'HEAD')
-    if git(repo, 'show', '-s', '--format=%P', commit) != git(repo, 'show', '-s', '--format=%P', state['integrated']):
-        raise ValueError('Amend the delivered commit in place; do not add commits or start another review loop.')
-    advance_parent(repo, binding, commit, state['integrated'])
-    state.update(feature=feature_link(repo, binding, commit), diff=diff_report(repo, binding))
-    return finish(context, commit)
+    repo, binding, state = Path.cwd(), context['binding'], context['state']
+    try:
+        check_repo(repo, binding)
+        if retained_rebase(repo):
+            git(repo, 'rebase', '--continue')
+        shared_repo(context)
+        commit = git(repo, 'rev-parse', 'HEAD')
+        if not state.get('amend_draft'):
+            state.update(amend_draft=commit, feature=feature_link(repo, binding, commit), diff=diff_report(repo, binding))
+        base = state.get('amend_base', state['integrated'])
+        git(repo, 'fetch', 'origin', binding['parent_branch'])
+        remote = git(repo, 'rev-parse', 'origin/' + binding['parent_branch'])
+        parent = git(repo, 'rev-parse', binding['parent_branch'])
+        ancestor = git(repo, 'merge-base', parent, remote)
+        upstream = parent if ancestor == remote else remote
+        git(repo, 'merge-base', '--is-ancestor', parent, upstream)
+        git(repo, 'merge-base', '--is-ancestor', base, upstream)
+        if base != upstream:
+            # Replace the delivered feature, replaying newer commits without adding a feature commit.
+            git(repo, 'reset', '--keep', upstream)
+            state['amend_base'] = upstream
+            git(repo, 'rebase', '--onto', commit, base)
+        commit = git(repo, 'rev-parse', 'HEAD')
+        test(repo, binding['test_command'])
+        advance_parent(repo, binding, commit, parent)
+        return finish(context, commit, remote, parent)
+    except ValueError as error:
+        if repo.is_dir() and state.get('amend_draft') and not retained_rebase(repo):
+            git(repo, 'reset', '--keep', state.pop('amend_draft'))
+            state.pop('amend_base', None)
+        raise context['error']('amendment_failed', 'Automatic amendment failed: ' + str(error),
+                               'Draft/rebase preserved. Resolve the Git error and retry push; no fresh review or approval.') from error
 
 
-def finish(context, integrated=None):
+def finish(context, integrated=None, previous=None, parent=None):
     """Reuse publication/cleanup for retained done; only cancellation finishes the SOP."""
     repo, binding, state = shared_repo(context), context['binding'], context['state']
     common = Path(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'))
@@ -286,17 +300,21 @@ def finish(context, integrated=None):
     if not cancelled:
         try:
             ref = 'refs/heads/' + binding['parent_branch']
-            lease = ['--force-with-lease=' + ref + ':' + state['integrated']] if amending else []
+            lease = ['--force-with-lease=' + ref + ':' + previous] if amending else []
             run('git', '--git-dir', str(common), 'push', *lease, 'origin', integrated + ':' + ref)
         except ValueError as error:
             checkout(context, common, integrated)
             if context['phase'] == 'manual_approve':
                 raise
             if amending:
-                return {'phase': 'amending', 'instruction': 'Parent push failed; restored the amendment checkout. Resolve with outer and retry push without review. ' + str(error)}
+                advance_parent(Path.cwd(), binding, parent, integrated)
+                git(Path.cwd(), 'reset', '--keep', state.pop('amend_draft'))
+                state.pop('amend_base', None)
+                raise
             state['integration_error'] = 'Parent push failed; restored the local branch/worktree for Reviewer recovery. ' + str(error)
             return {'phase': 'integration_error'}
-        state['integrated'] = integrated
+        state['integrated'] = state.pop('amend_draft') if amending else integrated
+        state.pop('amend_base', None)
     parent = context['binding']['main_issue_id']
     receipt = comment(parent, note, binding['dispatch_thread'])
     if not cancelled:
@@ -318,7 +336,8 @@ workflow = Workflow(
     State('integration_error', INTEGRATION_PROMPT, precheck=observed, view=integration_view, owner=owner('reviewer'), preview='Reviewer: diagnose integration failure and select recovery or rework.'),
     State('done', 'Feature commit already pushed to the parent branch. Use amend to revise that pushed feature.',
           precheck=observed, view=done_view, owner=owner('developer'), preview='Feature pushed. Amend only on an explicit outer request.'),
-    State('amending', 'Developer: amend the delivered commit in place, verify and interact briefly with outer as needed. No review loop; use push when ready.',
+    State('amending', 'Developer: minimal inline replacements within the delivered feature only; reject another feature. '
+          'Verify, then push for automatic replay/publication preserving newer main commits. No fresh review or approval.',
           precheck=observed, owner=owner('developer')),
     Option('submit', prompt='Test and request independent review; push only if manual.', action=submit,
            params=(Parameter('--summary', 'Delivered behavior and evidence'),)),
@@ -330,7 +349,7 @@ workflow = Workflow(
            params=(Parameter('--reason', 'Concrete cancellation blocker'),)),
     Option('final_approve', prompt='approve', action=merge_approved),
     Option('environment_repaired', prompt='Reviewer recovery completed: retry approved integration with required checks.'),
-    Option('amend', prompt='ONLY explicit outer request: recreate the issue checkout at the delivered commit and reopen the issue.', action=amend),
+    Option('amend', prompt='Explicit outer request: recreate the delivered feature checkout and reopen the issue.', action=amend),
     Option('push', prompt='Publish the amended commit, clean up and mark the native issue done.', action=push),
     Branch('approval', 'manual config?',
            select=lambda args, context: 'manual_approve' if context['binding']['manual'] else 'final_approve'),

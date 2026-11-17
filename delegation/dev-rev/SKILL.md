@@ -14,5 +14,6 @@ Keep one feature commit; amend corrections without switching branches.
 Follow the returned choices and reply guidance. Post any requested handoff,
 then end the turn without running the receiving role's callback.
 
-Wait for outer approval when requested. Amend shipped work only on an explicit
-outer request. If a callback conflicts with a human restriction, report it and stop.
+Initial delivery uses configured approval. Amend shipped work only on an explicit
+outer request: minimal inline replacements within that feature; reject another
+feature. Amendment and recovery need no fresh review or approval.
