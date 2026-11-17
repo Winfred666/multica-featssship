@@ -87,6 +87,7 @@ def request_config(batch, installed=None, *, index):
                   **{role + '_id': installed.get('installed_' + role + '_id') for role in ('delegator', 'developer', 'reviewer')},
                   direction=name, scope=selected.get('scope', ''), test_command=selected.get('test_command', ''),
                   questions=selected.get('questions', []))
+    result['developer_id'] = selected.get('developer_id', result['developer_id'])
     result.update(config)
     if selected and result.get('name'):
         result.setdefault('branch', feature_branch(selected, result['name']))

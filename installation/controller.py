@@ -12,6 +12,8 @@ PROMPT = ('Adjust the config to match the requested workflow. Keep what already 
           'Ask the human one question only if the context leaves something unclear. ')
 COMMENTS = ('Defaults: repository is the target Git URL, not the featssship source. '
             'Each directions entry owns name, scope (paths), Reviewer questions (string list), test_command and branch_prefix; '
+            'optional developer_id selects an existing developer agent UUID for that direction. '
+            'Developer precedence: delegation item developer_id, then direction developer_id, then the installed global Developer. '
             'replace the list to set all concurrent directions. Missing acceptance questions/test_command must be filled from context. '
             'Roles default to distinct new agents using the installer runtime/model; set role.id to reuse one. '
             'Blank model inherits the runtime default. Installation creates one independent MAIN; retries and updates use its saved ID. CEO is subscribed. '

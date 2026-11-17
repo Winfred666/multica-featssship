@@ -67,6 +67,41 @@ The installer owns `featssship-config.json`: repository, parent branch, roles,
 directions, manual default and optional sandbox settings. Batch items contain
 request-specific overrides; universal defaults still come from the installer.
 
+Each installation `directions[]` entry may set `developer_id` to an existing
+developer agent UUID. Omit it to use the installation-wide `developer` role
+(selected with `developer.id`, or created during confirmation). For example,
+this installer merge patch assigns a developer to `frontend` while `backend`
+uses the global default. Replace the placeholder UUID with the chosen agent's ID;
+the `directions` array replaces the whole list, so retain existing scopes and questions.
+
+```json
+{
+  "directions": [
+    {
+      "name": "frontend",
+      "developer_id": "DIRECTION_DEVELOPER_UUID",
+      "scope": "src/ui/",
+      "questions": ["Does the UI match the requested behavior?"],
+      "test_command": "git diff --check",
+      "branch_prefix": "feat/frontend"
+    },
+    {
+      "name": "backend",
+      "scope": "src/api/",
+      "questions": ["Does the API match the requested behavior?"],
+      "test_command": "git diff --check",
+      "branch_prefix": "feat/backend"
+    }
+  ]
+}
+```
+
+The installer submits the patch with `publish --patch '<JSON>'` for native outer
+confirmation; submission does not confirm installation. Choosing `frontend` in
+a delegation item selects its developer automatically. An explicit item
+`developer_id` overrides the direction; an unconfigured direction uses the global
+Developer. Other direction settings and the installation's manual approval remain unchanged.
+
 Edits publish attachment revisions with the same filename. Use the latest
 revision and serialize edits. See [workflow details](docs/workflow.md) for
 configuration transport and implementation notes.

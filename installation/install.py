@@ -38,6 +38,8 @@ def validate(config):
     for direction in config['directions']:
         for key in ('name', 'scope', 'test_command'):
             required(direction, key)
+        if 'developer_id' in direction:
+            required(direction, 'developer_id')
         questions = direction.get('questions')
         if not isinstance(questions, list) or not questions or any(not isinstance(q, str) or not q.strip() for q in questions):
             raise ValueError('Direction questions must be a nonempty list of strings.')

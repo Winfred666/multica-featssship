@@ -12,7 +12,7 @@ from sop import FINISHED, Completed, Option, Parameter, State, Workflow
 SOP_DISPLAY_NAME = 'multica-featssship-delegation'
 FINISHED_INSTRUCTION = 'End this turn silently.'
 
-FIELDS = {**dict.fromkeys(('name', 'request', 'direction', 'title', 'scope', 'github_issue', 'branch', 'parent_branch'), str),
+FIELDS = {**dict.fromkeys(('name', 'request', 'direction', 'title', 'scope', 'github_issue', 'branch', 'parent_branch', 'developer_id'), str),
           'manual': bool, 'sandbox': dict, 'questions': list}
 DRAFT_PROMPT = ('Read the batch JSON at <file path>, apply the request offline, then publish '
           'with refresh --config-file PATH.')
@@ -164,7 +164,7 @@ def dispatch_item(context, request, record, index):
         title = f'[{title}]({url})'
     if not record.get('issue_id'):
         child = cli('issue', 'create', '--title', title, '--description-stdin', '--parent', context['issue_id'],
-                    '--project', context['main']['project_id'], '--assignee-id', context['installed']['installed_developer_id'],
+                    '--project', context['main']['project_id'], '--assignee-id', request['developer_id'],
                     '--status', 'backlog', input=request['request'])
         record['issue_id'] = child['id']
         save_progress(context)

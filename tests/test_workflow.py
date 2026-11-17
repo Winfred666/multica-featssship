@@ -7,14 +7,46 @@ import sys
 import tempfile
 import unittest
 import uuid
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 MULTICA = shutil.which('multica')
 sys.path.insert(0, str(ROOT / 'installation'))
-from featssship import CONFIG_KEY, config_ref, feature_branch
+from featssship import CONFIG_KEY, DELEGATION_KEY, config_ref, delegation_config, feature_branch, feature_config, request_config
 
 
 class BranchNamingTests(unittest.TestCase):
+    def test_direction_developer_precedence(self):
+        directions = [
+            {'name': 'frontend', 'developer_id': 'direction-developer', 'scope': 'src/ui/',
+             'questions': ['Does the UI work?'], 'test_command': 'git diff --check'},
+            {'name': 'backend', 'scope': 'src/api/',
+             'questions': ['Does the API work?'], 'test_command': 'git diff --check'},
+        ]
+        installed = {'repository': 'target', 'manual': True, 'directions': directions,
+                     'installed_developer_id': 'global-developer'}
+        source = {'issue_id': 'installer', 'filename': 'featssship-config.json'}
+        batch = delegation_config(installed, {'issues': [
+            {'name': 'ui', 'direction': 'frontend'},
+            {'name': 'api', 'direction': 'backend'},
+            {'name': 'special', 'direction': 'frontend', 'developer_id': 'explicit-developer'},
+        ]}, source, 'main', 'thread')
+        for index, developer in enumerate(('direction-developer', 'global-developer', 'explicit-developer')):
+            with self.subTest(index=index):
+                resolved = request_config(batch, installed, index=index)
+                self.assertEqual(resolved['developer_id'], developer)
+                direction = directions[1 if index == 1 else 0]
+                for key in ('scope', 'questions', 'test_command'):
+                    self.assertEqual(resolved[key], direction[key])
+                self.assertTrue(resolved['manual'])
+                reference = {'issue_id': 'main', 'filename': 'batch.json', 'index': index}
+                issue = {'metadata': {DELEGATION_KEY: json.dumps(reference)}}
+                with patch('featssship.read_config', side_effect=[batch, installed]):
+                    self.assertEqual(feature_config(issue), resolved)
+        self.assertNotIn('developer_id', batch['issues'][0])
+        self.assertEqual(request_config({'issues': [{}]}, {**installed, 'directions': directions[:1]}, index=0)['developer_id'],
+                         'direction-developer')
+
     def test_configured_short_branch_names(self):
         for prefix in ('feat/frontend', 'fix/cli'):
             self.assertEqual(feature_branch({'name': 'work', 'branch_prefix': prefix}, 'tree-horizontal-more'),
