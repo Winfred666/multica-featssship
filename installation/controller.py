@@ -1,7 +1,7 @@
 """Draft configuration, collect native outer confirmation and retain installation."""
 import json
 
-from featssship import cli, config_ref, link_config, merge_patch, read_config, wake_agent, write_config
+from featssship import cli, comment, config_ref, independent_config, link_config, merge_patch, read_config, wake_agent, write_config
 from sop import Option, Parameter, State, Workflow
 
 CACHE_VIEW = False
@@ -26,8 +26,8 @@ def observed(context):
     reference = config_ref(issue)
     if not reference:
         reference = {'issue_id': issue['id'], 'filename': 'featssship-config.json'}
-        if not any(row['filename'] == reference['filename'] for row in issue.get('attachments', [])):
-            write_config(reference, defaults(issue), context['args'].thread)
+        if not any(row['filename'] == reference['filename'] for row in issue.get('attachments', [])) and not independent_config(reference, issue):
+            write_config(reference, defaults(issue))
         link_config(issue['id'], reference)
         issue['metadata']['featssship.config'] = reference
     context.update(config=read_config(reference), reference=reference, issue=issue)
@@ -36,7 +36,7 @@ def observed(context):
 
 
 def view(context):
-    return {'instruction': PROMPT + COMMENTS + '\n\nRead the latest configuration attachment: ' + json.dumps(context['reference']) +
+    return {'instruction': PROMPT + COMMENTS + '\n\nRead the configuration deliverable: ' + json.dumps(context['reference']) +
             '\nRequested changes: ' + context['state'].get('change_request', 'Prepare the initial configuration.')}
 
 
@@ -52,8 +52,10 @@ def publish(args, context):
     if any(key.startswith('installed_') or key.endswith('_id') for key in patch):
         raise context['error']('invalid_input', 'Use role.id to select an agent; installed_* IDs are maintained by installation.')
     config = merge_patch(context['config'], patch)
-    write_config(context['reference'], config, args.thread or context['state'].get('reply_parent'),
-                 context['state'].get('change_request', 'Initial configuration.'))
+    row = write_config(context['reference'], config)
+    comment(context['issue_id'], context['state'].get('change_request', 'Initial configuration.') +
+            '\n\n!file[' + row['filename'] + '](' + row['markdown_url'] + ')',
+            args.thread or context['state'].get('reply_parent'))
     return {'this_round_reply_guidance': 'End this turn silently.'}
 
 

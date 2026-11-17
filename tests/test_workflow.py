@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 MULTICA = shutil.which('multica')
@@ -83,6 +84,8 @@ class WorkflowFixture(unittest.TestCase):
         reference = config_ref(issue, key)
         if not reference:
             return {}
+        if reference.get('attachment_id'):
+            return json.loads(self.db()['attachments'][reference['attachment_id']]['data'])
         owner = self.db()['issues'][reference['issue_id']]
         return json.loads(next(row['data'] for row in reversed(owner['attachments']) if row['filename'] == reference['filename']))
 
@@ -147,6 +150,51 @@ class WorkflowFixture(unittest.TestCase):
         self.db_path.write_text(json.dumps(db))
         self.install()
         self.assertIn('Keep this footer.', self.db()['projects'][self.ids['project']]['description'])
+
+    def test_confirmation_renews_one_config_and_retries_with_resolved_roles(self):
+        # Real installer/helpers and Git; platform commands use fake_multica.py.
+        import install
+        from featssship import read_config, write_config
+        issue = self.db()['issues'][self.ids['installer']]
+        config = self.read_answers()
+        config['manual'] = True
+        state, snapshots = {}, []
+        def checkpoint(reference, document):
+            row = write_config(reference, document)
+            snapshots.append(read_config(reference))
+            return row
+        env = {**self.env, 'MULTICA_ISSUE_ID': issue['id']}
+        previous = Path.cwd()
+        os.chdir(self.repo)
+        self.addCleanup(os.chdir, previous)
+        with patch.dict(os.environ, env), patch.object(install, 'write_config', side_effect=checkpoint):
+            with patch.object(install, 'deploy', side_effect=ValueError('deployment interrupted')):
+                with self.assertRaisesRegex(ValueError, 'deployment interrupted'):
+                    install.execute(config, issue, state, lambda: None)
+            reference = config_ref(self.db()['issues'][issue['id']])
+            resolved = read_config(reference)
+            result = install.execute(resolved, issue, state, lambda: None)
+            # Recover after a lost reference save, without renewing a legacy file.
+            recovered = {key: value for key, value in reference.items() if key != 'attachment_id'}
+            write_config(recovered, resolved)
+        keys = ['installed_' + role + '_id' for role in ('delegator', 'developer', 'reviewer')]
+        self.assertEqual([[key for key in keys if key in snapshot] for snapshot in snapshots],
+                         [keys[:1], keys[:2], keys])
+        self.assertEqual(result['root_issue_id'], state['main_issue_id'])
+        self.assertEqual(result['developer_id'], resolved[keys[1]])
+        self.assertEqual(result['reviewer_id'], resolved[keys[2]])
+        self.assertEqual(recovered, reference)
+        db = self.db()
+        self.assertEqual(len(db['agents']), 4)  # installer plus three created roles
+        self.assertEqual(len(db['issues']), 2)  # installer plus one retained MAIN
+        independent = [row for row in db['attachments'].values() if 'issue_id' in row]
+        self.assertEqual([row['id'] for row in independent], [reference['attachment_id']])
+        self.assertIsNone(independent[0]['issue_id'])
+        self.assertIsNone(independent[0]['comment_id'])
+        self.assertTrue(json.loads(independent[0]['data'])['manual'])
+        self.assertEqual(config_ref(db['issues'][state['main_issue_id']]), reference)
+        self.assertFalse(db['comments'])
+        self.assertEqual(len(db['issues'][issue['id']]['attachments']), 1)  # legacy file untouched
 
 
 if __name__ == '__main__':

@@ -41,6 +41,21 @@ def main():
         destination = Path(option('output-dir')) / row['filename']
         destination.write_text(row['data'])
         result = {'path': str(destination)}
+    elif args[:2] == ['attachment', 'get']:
+        result = db['attachments'][args[2]]
+    elif args[:2] == ['attachment', 'upload']:
+        assert '--independent' in args
+        file = Path(args[2])
+        identifier = option('attachment-id') or new()
+        result = {'id': identifier, 'filename': file.name, 'data': file.read_text(),
+                  'issue_id': None, 'comment_id': None,
+                  'markdown_url': 'https://fixture.test/attachments/' + identifier}
+        db.setdefault('attachments', {})[identifier] = result
+        owner = db['issues'][os.environ['MULTICA_ISSUE_ID']]
+        ids = json.loads(owner['metadata'].get('independent_artifacts', '[]'))
+        if identifier not in ids:
+            ids.append(identifier)
+        owner['metadata']['independent_artifacts'] = json.dumps(ids)
     elif args[:2] == ['issue', 'get']:
         result = db['issues'][args[2]]
     elif args[:3] == ['issue', 'subscriber', 'add']:
@@ -87,6 +102,9 @@ def main():
             result['attachments'] = [attachment]
             db['issues'][args[3]].setdefault('attachments', []).append(attachment)
         db['comments'].append(result)
+    elif args[:3] == ['issue', 'comment', 'delete']:
+        result = next(row for row in db['comments'] if row['id'] == args[3])
+        result.update(content='', deleted_at='fixture')
     elif args[:3] == ['issue', 'comment', 'list']:
         rows = [row for row in db['comments'] if row['issue_id'] == args[3]]
         index = {row['id']: row for row in rows}

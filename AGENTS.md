@@ -30,10 +30,12 @@ Create MAIN without a parent, save its ID for same-cycle retries and subscribe C
 Preserve existing MAIN issues. Deploy skills only to the target repository.
 Fixed script inputs come from JSON config; mutable execution checkpoints from issue metadata.
 Issue/project titles and descriptions are display only.
-Resolve settings through owner/filename references, never installation-parent ancestry.
+Resolve settings through explicit config references with stable independent attachment
+IDs; accept legacy owner/filename references without installation-parent ancestry.
 Do not add nested-issue hierarchy or rubric-style tests. Publish tidy JSON to
 enter the native outer questionnaire in the current installation issue/thread.
-Keep change context with the attachment; return only silent final-hop guidance,
+Keep change context with the published non-owning config link; save role checkpoints
+to the same independent deliverable without comments. Return only silent final-hop guidance,
 including initial publication. Outer confirms installation directly or requests
 edits with one change-request argument; do not inspect confirmation comments.
 

@@ -22,11 +22,23 @@ def link_config(issue_id, reference, key=CONFIG_KEY):
 
 
 def attachment(reference):
+    if reference.get('attachment_id'):
+        return cli('attachment', 'get', reference['attachment_id'])
     owner = cli('issue', 'get', reference['issue_id'])
+    shared = independent_config(reference, owner)
+    if shared:
+        return shared
     rows = [row for row in owner.get('attachments', []) if row['filename'] == reference['filename']]
     if not rows:
         raise ValueError('Configuration attachment is missing: ' + json.dumps(reference))
     return max(rows, key=lambda row: (row.get('created_at', ''), row['id']))
+
+
+def independent_config(reference, owner):
+    for identifier in json.loads(owner.get('metadata', {}).get('independent_artifacts', '[]')):
+        row = cli('attachment', 'get', identifier)
+        if row['filename'] == reference['filename']:
+            return row
 
 
 def download_config(reference, directory):
@@ -41,21 +53,31 @@ def read_config(reference):
         return json.loads(download_config(reference, directory).read_text())
 
 
-def write_config(reference, config, parent=None, message=' '):
-    return write_artifact(reference, json.dumps(config, indent=2) + '\n', parent, message)
+def write_config(reference, config):
+    # Recover the ID if upload succeeded before the config reference was saved.
+    if not reference.get('attachment_id'):
+        row = independent_config(reference, cli('issue', 'get', reference['issue_id']))
+        if row:
+            reference['attachment_id'] = row['id']
+    renewal = ['--attachment-id', reference['attachment_id']] if reference.get('attachment_id') else []
+    with tempfile.TemporaryDirectory(prefix='.featssship-', dir=Path.cwd()) as directory:
+        path = Path(directory) / reference['filename']
+        path.write_text(json.dumps(config, indent=2, allow_nan=False) + '\n')
+        row = cli('attachment', 'upload', str(path), '--independent', *renewal)
+    reference['attachment_id'] = row['id']
+    link_config(reference['issue_id'], reference)
+    return row
 
 
-def write_artifact(reference, content, parent=None, message=' '):
-    # TODO: Replace immutable attachment revisions with native deliverable update.
-    # The stable owner/filename reference resolves the newest revision, across issues.
+def write_batch(reference, config, parent=None):
+    # Dispatch uses immutable batch IDs to guard the confirmed revision.
     if not parent:
         roots = cli('issue', 'comment', 'list', reference['issue_id'], '--roots-only', '--summary')
         parent = roots[-1]['id'] if roots else None
     with tempfile.TemporaryDirectory(prefix='.featssship-', dir=Path.cwd()) as directory:
         path = Path(directory) / reference['filename']
-        path.write_text(content)
-        # The caller supplies change context; the engine publishes the questionnaire.
-        words = ['issue', 'comment', 'add', reference['issue_id'], '--content', message, '--attachment', str(path)]
+        path.write_text(json.dumps(config, indent=2) + '\n')
+        words = ['issue', 'comment', 'add', reference['issue_id'], '--content', ' ', '--attachment', str(path)]
         if parent:
             words += ['--parent', parent]
         return cli(*words)
@@ -122,7 +144,8 @@ def run(*words, cwd=None, input=None):
 
 
 def cli(*words, input=None):
-    return json.loads(run('multica', *words, '--output', 'json', input=input))
+    output = () if words[0] == 'attachment' else ('--output', 'json')
+    return json.loads(run('multica', *words, *output, input=input))
 
 
 def comment(issue_id, content, parent=None):

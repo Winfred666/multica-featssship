@@ -48,8 +48,8 @@ action is distinct from the `edit` State. The addressed owner’s `issue_id` and
 `thread` select this installation issue/current thread; its required agent `id`
 transports callbacks and is not the outer decision-maker. The engine handles
 questionnaire answers; installation does not inspect comment authors, wording or ordering. The JSON role key is `delegator`. The installer owns one logical master JSON
-attachment containing installation settings and defaults. MAIN receives only
-its explicit owner/filename reference in `featssship.config`, not copied defaults
+deliverable containing installation settings and defaults. MAIN receives only
+its explicit issue/filename/attachment-ID reference in `featssship.config`, not copied defaults
 or an installer-parent link. It subscribes CEO and runs independently after the
 installer reaches retained ordinary state `finished`, whose sole option is `update`.
 Re-entry preserves settings and MAIN identity; its immediate MAIN checkpoint remains
@@ -60,12 +60,18 @@ Installation does not publish platform skills or change agent skill assignments.
 Dispatch and handoff prompts use `multica sop run NAME`. Both roles
 run it from the prepared issue worktree, without agent-installed skills.
 
-Attachment revisions temporarily replace unavailable native mutable deliverables.
-`featssship.py` isolates upload and authenticated download/read, with TODOs for native
-update/preview. Draft publications carry the change request beside the attachment;
-other revisions render empty. The engine publishes the outer questionnaire after the final action. Readers select the latest matching owner/filename. References
-remain valid after edits, across issues. Serialize edits; immutable attachments
-provide no compare-and-swap. Old revisions remain history.
+`featssship.py` saves the master config with `multica attachment upload --independent`
+and renews it with `--attachment-id`. The file has no issue or comment owner;
+the CLI soft-links it through the installation issue's `independent_artifacts`.
+`featssship.config` retains its stable ID for cross-issue readers. An upload whose
+config-reference save was interrupted is recovered from that soft link by filename.
+Explicit draft publication posts change context and a non-owning file link, then
+the engine publishes the outer questionnaire. Each resolved role is saved to the
+same deliverable before continuing, without a comment. Legacy issue/filename
+references remain readable; their first write creates an independent config,
+leaving all old attachments intact. Delegation batches keep immutable comment
+attachments because dispatch checks the confirmed revision ID. Serialize edits;
+uploads provide no compare-and-swap.
 See [README](../README.md#configuration) for editing.
 The installer action graphs live in [its controller](../installation/controller.py).
 

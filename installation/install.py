@@ -3,7 +3,7 @@
 import re
 import shlex
 
-from featssship import check_repo, cli, config_ref, exclude_local, feature_branch, link_config, repo_root, write_config
+from featssship import CONFIG_KEY, check_repo, cli, config_ref, exclude_local, feature_branch, link_config, repo_root, write_config
 from packages import build
 
 START, END = '<!-- featssship:installation -->', '<!-- /featssship:installation -->'
@@ -74,7 +74,9 @@ def agent(config, role, issue, state):
         selected = created['id']
     if config.get(key) != selected:
         config[key] = selected
-        write_config(config_ref(issue), config, state.get('reply_parent'))
+        reference = config_ref(issue)
+        write_config(reference, config)
+        issue['metadata'][CONFIG_KEY] = reference
     data = cli('agent', 'get', selected)
     if not data.get('runtime_id') or data.get('workspace_id') != issue['workspace_id']:
         raise ValueError('Select an agent bound to a runtime in the target workspace.')

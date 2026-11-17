@@ -5,7 +5,7 @@ import shutil
 import uuid
 import tempfile
 
-from featssship import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, config_ref, delegation_config, download_config, entry_command, git, has_manual, link_config, read_config, request_config, repo_root, wake_agent, write_config
+from featssship import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, config_ref, delegation_config, download_config, entry_command, git, has_manual, link_config, read_config, request_config, repo_root, wake_agent, write_batch
 from github_issue import issue_link
 from sop import FINISHED, Completed, Option, Parameter, State, Workflow
 
@@ -40,7 +40,7 @@ def batch_config(batch, context):
 
 def publish(batch, context):
     config = batch_config(batch, context)
-    write_config(context['reference'], config, context['state']['reply_parent'])
+    write_batch(context['reference'], config, context['state']['reply_parent'])
     link_config(context['issue_id'], context['reference'], DELEGATION_KEY)
     context['record'] = {'thread': config['dispatch_thread'],
                          'draft_attachment_id': attachment(context['reference'])['id']}

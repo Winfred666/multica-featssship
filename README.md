@@ -11,7 +11,7 @@ Requires Python 3.11+, Git and authenticated `multica` with `sop run` support.
    directions, runtime or model choices.
 2. The installer reads its saved master JSON, creating defaults only when absent.
    It asks one self-contained question only when something is uncertain.
-3. Download and review the attached JSON. In the questionnaire, choose `confirm`
+3. Download and review the configuration JSON. In the questionnaire, choose `confirm`
    to install or `request_edit` with a change request for the installer.
 4. After confirmation, installation creates an independent `MAIN DEV:` issue, sets up the
    agents, deploys repository-local skills to `.agents/skills/`, and subscribes CEO.
@@ -67,6 +67,8 @@ The installer owns `featssship-config.json`: repository, parent branch, roles,
 directions, manual default and optional sandbox settings. Batch items contain
 request-specific overrides; universal defaults still come from the installer.
 
-Edits publish attachment revisions with the same filename. Use the latest
-revision and serialize edits. See [workflow details](docs/workflow.md) for
-configuration transport and implementation notes.
+The master config is one independent deliverable. Edits and resolved role
+checkpoints renew its saved attachment ID. Only explicit draft publication
+announces its link; confirmation does not post config versions. Existing comment
+attachments remain untouched. Serialize edits. Batch dispatch documents still
+use immutable revisions. See [workflow details](docs/workflow.md).
