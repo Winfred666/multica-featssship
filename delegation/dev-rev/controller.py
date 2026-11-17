@@ -6,7 +6,6 @@ import json
 from featssship import check_repo, clean, cli, comment, feature_config, git, run, test, wake_agent
 from sop import Branch, Completed, Option, Parameter, State, Workflow
 
-CACHE_VIEW = False
 FINAL_DONE = 'directly and silently end this turn'
 
 REVIEW_PROMPT = ('Reviewer: inspect the submitted diff in this issue\'s shared folder and branch '
@@ -54,8 +53,6 @@ def integration_view(context):
 def observed(context):
     issue = cli('issue', 'get', context['issue_id'])
     context.update(issue=issue, binding=feature_config(issue))
-    if context['args'].thread:
-        context['state']['reply_parent'] = context['args'].thread
     if issue['status'] == 'cancelled' or (issue['status'] == 'done' and context['phase'] not in ('done', 'amending')):
         raise Completed(FINAL_DONE, target=Workflow.FINISHED)
 
@@ -369,5 +366,4 @@ workflow = Workflow(
         ('done', 'amend'), ('amend', 'amending'),
         ('amending', 'push'), ('push', 'done'),
     ),
-    params=(Parameter('--thread', 'Native triggering comment UUID', required=False),),
 )
