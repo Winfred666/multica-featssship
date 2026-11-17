@@ -10,6 +10,7 @@ Requires Python 3.11+, Git and authenticated `multica` with `sop run` support.
    installer agent. Give it this README, the target repository and any known
    directions, runtime or model choices.
 2. The installer reads its saved master JSON, creating defaults only when absent.
+   It explicitly asks whether to enable `develop_reviewer_split` (default `false`).
    It asks one self-contained question only when something is uncertain.
 3. Download and review the attached JSON. In the questionnaire, choose `confirm`
    to install or `request_edit` with a change request for the installer.
@@ -70,3 +71,22 @@ request-specific overrides; universal defaults still come from the installer.
 Edits publish attachment revisions with the same filename. Use the latest
 revision and serialize edits. See [workflow details](docs/workflow.md) for
 configuration transport and implementation notes.
+
+### Split experiments
+
+Set installation `develop_reviewer_split: true` and confirm installation/update
+to select separate experiment bundles. The default `false` keeps the existing
+shipping workflow. Direction names, scopes and review questions still apply.
+For split directions, `test_command: "evaluate.py"` names the canonical private
+score script rather than a public shell test.
+
+MAIN creates a Reviewer `exp` child. Reviewer prepares a Developer `exp` child
+and sends its native development questionnaire there. Developer commits the
+candidate and answers when finished; only Reviewer runs the split SoP. Reviewer
+runs one private evaluation and returns `{"score": <finite number>}` plus a short
+review to MAIN. Experiments never merge, integrate or push to main. MAIN's next
+decision is outside this workflow; `manual` only controls normal shipping.
+
+Real evaluation code/data and a dedicated Unix-account boundary must be supplied
+before scoring. Different agent IDs or folders are not isolation. See the
+[private evaluation contract](docs/workflow.md#private-evaluation-boundary).

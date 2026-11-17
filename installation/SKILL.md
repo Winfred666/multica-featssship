@@ -12,6 +12,9 @@ discovery. Pass `--thread <trigger UUID>` on comment-triggered calls.
 
 Follow the returned drafting and publication guidance. Outer confirms or requests
 edits through the native questionnaire; do not answer on outer's behalf.
+Before initial publication, explicitly ask whether to enable
+`develop_reviewer_split` (boolean, default false). Hidden evaluation assets never
+belong in the shared installation JSON.
 Follow the returned reply guidance and end the publication turn.
 
 For updates, use the latest source or rebuilt standalone installer and run

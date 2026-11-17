@@ -4,6 +4,14 @@ Read README.md for usage and [docs/workflow.md](docs/workflow.md) for source
 layout and package builds. Keep procedure scripts in their owning SoP folder.
 Use the CLI-owned Symbolic-SoP engine. Keep this repository atomic; no submodules.
 
+Shipping rules below describe the default normal bundle. Opt-in split experiments
+use `delegation/split/`: MAIN -> Reviewer exp -> Developer exp. Reviewer alone
+runs that SoP; Developer answers the addressed questionnaire. No experiment
+integration, merge or push-to-main. Keep the install-time router in
+`delegation/common/router.py` and both procedure implementations separate.
+See [the enforced evaluation boundary](docs/workflow.md#private-evaluation-boundary)
+before using any hidden input. Shared config links are public, never secret storage.
+
 Keep one commit per feature. Amend corrections and finish verification before pushing.
 
 Declare global routing with native Workflow (source, destination) pairs and local action logic in short DOT docstrings. Reuse the RSI creator for protocol and renderer maintenance. Keep prompts limited to inputs, entry, judgment and exception handling. README covers installation and usage.
@@ -31,7 +39,7 @@ Preserve existing MAIN issues. Deploy skills only to the target repository.
 Fixed script inputs come from JSON config; mutable execution checkpoints from issue metadata.
 Issue/project titles and descriptions are display only.
 Resolve settings through owner/filename references, never installation-parent ancestry.
-Do not add nested-issue hierarchy or rubric-style tests. Publish tidy JSON to
+Do not add nested-issue hierarchy to normal shipping or rubric-style tests. Publish tidy JSON to
 enter the native outer questionnaire in the current installation issue/thread.
 Keep change context with the attachment; return only silent final-hop guidance,
 including initial publication. Outer confirms installation directly or requests

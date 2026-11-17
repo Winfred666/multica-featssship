@@ -2,9 +2,13 @@
 """README installer: edit one config, then install after human confirmation."""
 import re
 import shlex
+import sys
 
 from featssship import check_repo, cli, config_ref, exclude_local, feature_branch, link_config, repo_root, write_config
-from packages import build
+from packages import DELEGATION, build, skill_name
+
+sys.path.insert(0, str(DELEGATION / 'common'))
+from router import roles
 
 START, END = '<!-- featssship:installation -->', '<!-- /featssship:installation -->'
 
@@ -18,7 +22,7 @@ def section(original, text):
 def defaults(issue):
     source = cli('agent', 'get', issue['assignee_id'])
     settings = {key: source.get(key, '') for key in ('runtime_id', 'model', 'thinking_level')}
-    return {'repository': '', 'parent_branch': 'main', 'manual': False,
+    return {'repository': '', 'parent_branch': 'main', 'manual': False, 'develop_reviewer_split': False,
             **{role: {'name': 'Featssship ' + label, **settings}
                for role, label in (('delegator', 'Delegator'), ('developer', 'Developer'), ('reviewer', 'Reviewer'))},
             'directions': [{'name': 'main', 'scope': '.', 'questions': [],
@@ -26,6 +30,7 @@ def defaults(issue):
 
 
 def validate(config):
+    roles(config)
     if not isinstance(config.get('manual', False), bool):
         raise ValueError('manual must be true or false.')
     def required(data, key):
@@ -64,8 +69,8 @@ def agent(config, role, issue, state):
     if not selected:
         settings = config[role]
         instructions = {'delegator': 'Only draft and delegate features with the repository-local featssship skill, then receive results.',
-                        'developer': 'Own only development: implement, test, correct and submit with the repository-local featssship skill.',
-                        'reviewer': 'Review the submitted revision, then own approval, scripted integration, push and completion with the repository-local featssship skill; return source corrections to Developer.'}
+                        'developer': 'Own only development: implement, test, correct and submit via the selected repository-local workflow. In experiments, answer the addressed development questionnaire when finished; do not run the Reviewer SoP.',
+                        'reviewer': 'Own review and completion via the selected repository-local workflow; return shipping source corrections to Developer. Experiment issues use only the Reviewer-owned split SoP, one private score and review to MAIN, never integration or push-to-main.'}
         words = ['agent', 'create', '--name', settings['name'], '--runtime-id', settings['runtime_id'],
                  '--model', settings['model'], '--instructions', instructions[role]]
         if settings.get('thinking_level'):
@@ -137,17 +142,18 @@ def deploy(config, issue, root, *, include_feature=True):
     exclude_local(repo)
     destination = repo / '.agents' / 'skills'
     name = 'multica-featssship-' + issue['project_id'][:8]
-    build('delegation', destination / name, name=name)
+    delegation_role, feature_role = roles(config)
+    build(delegation_role, destination / name, name=name)
     # Existing dev-rev entry paths may be pinned by in-flight issues.
-    if include_feature:
-        build('feature', destination / 'multica-featssship-develop-review')
+    feature_destination = destination / skill_name(feature_role)
+    if include_feature or not feature_destination.exists():
+        build(feature_role, feature_destination)
     # Remove only the old installer's owned block, preserving project context.
     project_text = re.sub(re.escape(START) + r'.*?' + re.escape(END), '', project.get('description') or '', flags=re.S)
     if project_text != (project.get('description') or ''):
         cli('project', 'update', project['id'], '--description', project_text)
     root_text = section(root.get('description'),
-                        'MAIN drafts and delegates features. '
-                        'Developer implements and tests; Reviewer owns review, approved integration and completion.\n\nRun `' + shlex.join(['multica', 'sop', 'run', name]) + '` from the target repository root.')
+                        'MAIN drafts and delegates through the installed workflow and receives results.\n\nRun `' + shlex.join(['multica', 'sop', 'run', name]) + '` from the target repository root.')
     title = 'MAIN DEV: ' + re.sub(r'^(?:MAIN DEV:\s*)+', '', root['title'])
     cli('issue', 'update', root['id'], '--title', title, '--description-stdin', '--no-start', input=root_text)
     return shlex.join(['multica', 'sop', 'run', name])

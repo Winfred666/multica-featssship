@@ -3,14 +3,19 @@
 ## Source layout and packages
 
 ```text
-installation/                Installer: SKILL.md, controller.py, install.py, packages.py
-  featssship.py, config.json  Shared helpers and DEBUG default
-delegation/                  MAIN: SKILL.md, controller.py, github_issue.py
-  dev-rev/                   Developer–Reviewer: SKILL.md, controller.py
+installation/                  Installer and shared config/CLI helpers
+delegation/common/             Install-time router, shared batch drafting and GitHub links
+delegation/normal/             Normal delegation controller and SKILL.md
+  dev-rev/                     Unchanged shipping procedure/controller
+delegation/split/              Experiment delegation controller and SKILL.md
+  devrev_split/                Reviewer-owned procedure and canonical score adapter
 ```
 
 From `installation/`, use `packages.build('installation', destination)`,
-`packages.build('delegation', destination)` or `packages.build('feature', destination)`.
+`packages.build('delegation', destination)` or `packages.build('feature', destination)`. Split counterparts are `split-delegation`
+and `split-feature`. `delegation/common/router.py` chooses the pair once at
+installation/update using `develop_reviewer_split` (absent/false keeps normal).
+The two procedures contain no mode conditionals; common batch drafting is reused.
 The builder supplies shared helpers/config and validates with `multica sop dev validate DIRECTORY`.
 Installer packages include both child SoPs. Deployment builds directly into `.agents/skills/`,
 preserving config. Dispatch copies the dev-rev package into each prepared child worktree
@@ -83,7 +88,7 @@ Once a child exists, resume dispatch rather than editing or refreshing.
 
 MAIN passes a short name;
 the configured direction prefix formats the feature branch. The child uses its
-prepared issue worktree for one shared [procedure](../delegation/dev-rev/controller.py).
+prepared issue worktree for one shared [procedure](../delegation/normal/dev-rev/controller.py).
 
 The controller registers each action once and binds routing with native
 `Workflow(edges=((source, destination), ...))` pairs as the sole topology.
@@ -173,3 +178,96 @@ skills before installed skills.
 Implementation note: delegation declares `edit` and `outer_decide`; runtime-owned `FINISHED`
 is the ringed-circle target that deletes only its SOP key and emits callback-free
 exit guidance. See `multica sop dev docs` for completion modes.
+
+## Split experiment flow
+
+```text
+MAIN: split delegation (same native batch confirmation)
+  -> Reviewer exp issue: ready -> prepare -> develop (addressed to Developer)
+       -> Developer exp issue: implement candidate and answer finished(commit, summary)
+     -> evaluate -> score -> review -> deliver -> reported
+```
+
+Reviewer retains the SoP record and identity throughout. The native engine
+publishes the questionnaire in Reviewer's issue and forwards its link/agent
+mention to the Developer issue. Developer follows that question's `!sop-remote`
+answer instructions, not `sop run`. The engine executes the callback under the
+owning Reviewer task; Developer never receives a Reviewer credential.
+`reported` is retained so re-entry cannot start another evaluation. Both issues
+enter `in_review`, not `done`; acceptance remains outside the experiment.
+
+The existing owner/filename/index config links resolve installation roles,
+directions, scope and questions. Developer receives the same public reference,
+not a copy containing hidden data. No evaluator path, inputs, command output or
+credential is published in those attachments, comments, candidate worktrees or
+SoP state. Public direction `test_command` must be `evaluate.py`; no shared
+shell command is executed for scoring. Existing normal test commands are unchanged.
+
+### Private evaluation boundary
+
+The current daemon task credential is **not** a filesystem sandbox. Distinct
+agents on the same Unix UID can read each other's known paths, including 0600
+files. A second folder/runtime ID or instructions alone cannot hide inputs.
+Scoring therefore fails closed until an operator provisions dedicated,
+unprivileged Developer and Reviewer Unix accounts and binds their existing
+agents to runtimes running under those accounts. Neither account may switch to
+the other, use sudo/docker/host-admin access, or share private mounts. Do not
+reconfigure agents automatically. Native task API scopes and issue visibility
+are not used to store secrets.
+
+On the Reviewer's host the operator supplies
+`/etc/multica-featssship/split/<reviewer-agent-UUID>.json`:
+
+```json
+{
+  "reviewer_uid": 1201,
+  "developer_uid": 1202,
+  "developer_id": "<actual Developer agent UUID>",
+  "reviewer_runtime_id": "<actual Reviewer runtime UUID>",
+  "developer_runtime_id": "<actual Developer runtime UUID>",
+  "evaluators": {"<installed direction>": "/private/reviewer/evaluation"}
+}
+```
+
+These are schema examples, not configured identities. The two policy directories
+and file must be root-owned and not group/world writable. Do not put hidden
+inputs in the policy. It binds actual runtime accounts, not their display names;
+the operator must verify and maintain those bindings. The adapter checks the
+calling UID, distinct non-root Developer UID, agent/runtime bindings and private
+directory ownership/mode. The CLI cannot attest a remote process's Unix UID;
+root-owned host policy is the trust anchor. The existing same-user runtime
+layout does not satisfy this policy and is not claimed to be isolated.
+
+Each evaluator directory is Reviewer-owned mode **0700**; Unix DAC denies the
+Developer account traversal regardless of group membership. It contains the
+real hidden inputs and trusted Reviewer-owned `evaluate.py`, not group/world
+writable. Keep the directory outside repositories and Developer-accessible
+mounts. No hidden assets are included in a built bundle. There is no connection
+to any deleted hidden-test repository.
+
+The canonical invocation, in that private directory, is:
+
+```text
+python3 evaluate.py --candidate /private/temporary/candidate.tar
+stdout: {"score": <finite JSON number>}
+```
+
+`score.py` exports the exact submitted Git commit as a tar archive, never the
+mutable working tree. `evaluate.py` is trusted evaluation code, not candidate
+code. It may inspect the archive directly. If it executes candidate code, the
+operator-provided evaluator must run that code in an OS sandbox with **no hidden
+files, Reviewer credentials, host access or network** and pass only public test
+inputs. The adapter does not execute candidate code or provide that sandbox.
+Do not enable executable candidates without that boundary. Reviewer runs the
+adapter through the `score` action, which validates exactly one finite numeric
+`score`, excluding booleans and extra fields. Only that score is saved/published;
+private stdout/stderr and failures are withheld.
+
+The action saves `evaluation_attempted` before starting the canonical process.
+No retries after evaluator failure, malformed output or interruption. Missing
+policy/inputs can be supplied before the first attempt. An interrupted attempt
+without a saved score has no result; do not fabricate one. Delivery posts one
+`{"score": number}` JSON block plus `--review` text and the candidate revision as
+a receipt-only `/note` in MAIN's original dispatch thread. It makes no merge,
+integration or push call. MAIN policy, source integration and human approval are
+not altered.
