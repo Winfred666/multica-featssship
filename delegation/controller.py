@@ -5,7 +5,7 @@ import shutil
 import uuid
 import tempfile
 
-from featssship import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, config_ref, delegation_config, download_config, entry_command, git, has_manual, link_config, read_config, request_config, repo_root, wake_agent, write_config
+from featssship import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, config_ref, delegation_config, download_config, entry_command, git, has_manual, link_config, read_config, request_config, wake_agent, write_config
 from github_issue import issue_link
 from sop import FINISHED, Completed, Option, Parameter, State, Workflow
 
@@ -169,7 +169,7 @@ def dispatch_item(context, request, record, index):
         record['issue_id'] = child['id']
         save_progress(context)
     child = cli('issue', 'get', record['issue_id'])
-    repo = repo_root()
+    repo = Path(git(Path(__file__).resolve().parent, 'rev-parse', '--show-toplevel')).resolve()
     check_repo(repo, context['installed'])
     parent_branch = request['parent_branch']
     ref = 'refs/heads/' + branch

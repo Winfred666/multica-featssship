@@ -10,6 +10,9 @@ after review.
 
 From the target repository in MAIN DEV:, run
 `multica sop run multica-featssship --thread <request UUID>`.
+Confirmation resolves Git from this installed bundle's target checkout, even
+when the callback's saved workdir is MAIN's task context. Retry partial dispatch
+with `confirm`; saved children are reused.
 
 Edit the shown JSON offline and run the returned `refresh --config-file PATH`
 command to publish it. Outer confirms or requests changes through the native

@@ -11,7 +11,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 MULTICA = shutil.which('multica')
 sys.path.insert(0, str(ROOT / 'installation'))
-from featssship import CONFIG_KEY, config_ref, feature_branch, request_config
+from featssship import CONFIG_KEY, DELEGATION_KEY, DISPATCH_KEY, config_ref, feature_branch, request_config
 
 
 class BranchNamingTests(unittest.TestCase):
@@ -122,6 +122,48 @@ class WorkflowFixture(unittest.TestCase):
         if self.installer()['status'] != 'finished':
             self.installer('publish', '--patch', '{}')
             self.assertEqual(self.installer('confirm')['status'], 'finished')
+
+    def test_confirmation_from_main_task_reuses_child(self):
+        from packages import build
+        name = 'multica-featssship'
+        skills = self.repo / '.agents/skills'
+        build('delegation', skills / name)
+        build('feature', skills / 'multica-featssship-develop-review')
+        (skills / name / 'config.json').unlink()
+        config = self.read_answers()
+        config.update(manual=True, installed_developer_id=str(uuid.uuid4()),
+                      installed_reviewer_id=str(uuid.uuid4()))
+        self.write_answers(config)
+        db = self.db()
+        main = db['issues'][self.ids['installer']]
+        thread, child_id = str(uuid.uuid4()), str(uuid.uuid4())
+        reference = {'issue_id': main['id'], 'filename': 'batch.json'}
+        batch = {'issues': [{'name': 'callback', 'request': 'Ship callback fix.'}],
+                 'source': config_ref(main), 'main_issue_id': main['id'], 'dispatch_thread': thread}
+        row = {'id': str(uuid.uuid4()), 'filename': reference['filename'], 'data': json.dumps(batch)}
+        db['attachments'][row['id']] = row
+        main['attachments'].append(row)
+        main['metadata'][DELEGATION_KEY] = json.dumps(reference)
+        main['metadata'][DISPATCH_KEY] = json.dumps({'thread': thread, 'draft_attachment_id': row['id'],
+                                                   'items': [{'issue_id': child_id}]})
+        task = self.base / 'main-task'
+        task.mkdir()
+        main['metadata']['sop.' + name] = json.dumps({'status': 'outer_decide', 'workdir': str(task)})
+        db['issues'][child_id] = {'id': child_id, 'status': 'backlog', 'labels': [], 'metadata': {}}
+        self.db_path.write_text(json.dumps(db))
+        env = {**self.env, 'MULTICA_ISSUE_ID': main['id'], 'MULTICA_AGENT_ID': self.ids['main'],
+               'MULTICA_WORKSPACE_ID': self.ids['workspace'], 'MULTICA_SOP_SKILL_ROOTS': str(skills)}
+        result = self.call(MULTICA, 'sop', 'run', name, 'confirm', cwd=task, env=env)
+        self.assertEqual(json.loads(result.stdout)['status'], 'FINISHED')
+        child = self.db()['issues'][child_id]
+        self.assertEqual(child['status'], 'todo')
+        self.assertEqual({label['name'] for label in child['labels']}, {'dev', 'manual'})
+        worktree = self.repo / '.git/featsship' / child_id
+        self.assertEqual(self.call('git', 'branch', '--show-current', cwd=worktree).stdout.strip(),
+                         'feat/messages/callback')
+        progress = json.loads(self.db()['issues'][main['id']]['metadata'][DISPATCH_KEY])
+        self.assertEqual(progress['items'], [{'issue_id': child_id, 'dispatched': True}])
+        self.assertFalse(any(call[:2] == ['issue', 'create'] for call in self.db()['calls']))
 
     def test_standalone_bundles_and_packaged_installer(self):
         from packages import build

@@ -74,6 +74,11 @@ def main():
     elif args[:2] == ['issue', 'status']:
         result = db['issues'][args[2]]
         result.update(status=args[3], status_category=args[3])
+    elif args[:2] == ['label', 'list']:
+        result = [{'id': name, 'name': name} for name in ('dev', 'manual')]
+    elif args[:3] == ['issue', 'label', 'add']:
+        db['issues'][args[3]]['labels'].append({'id': args[4], 'name': args[4]})
+        result = {'ok': True}
     elif args[:3] == ['issue', 'comment', 'add']:
         parent = option('parent')
         result = {'id': new(), 'issue_id': args[3], 'parent_id': parent, 'content': text('content'),
