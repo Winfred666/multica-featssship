@@ -5,14 +5,14 @@ import shutil
 import uuid
 import tempfile
 
-from featssship import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, config_ref, delegation_config, download_config, entry_command, git, has_manual, link_config, read_config, request_config, repo_root, wake_agent, write_config
+from featssship import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, config_ref, delegation_config, download_config, entry_command, git, has_manual, link_config, read_config, request_config, request_title, repo_root, wake_agent, write_config
 from github_issue import issue_link
 from sop import FINISHED, Completed, Option, Parameter, State, Workflow
 
 SOP_DISPLAY_NAME = 'multica-featssship-delegation'
 FINISHED_INSTRUCTION = 'End this turn silently.'
 
-FIELDS = {**dict.fromkeys(('name', 'request', 'direction', 'title', 'scope', 'github_issue', 'branch', 'parent_branch', 'developer_id'), str),
+FIELDS = {**dict.fromkeys(('name', 'request', 'direction', 'action', 'title', 'scope', 'github_issue', 'branch', 'parent_branch', 'developer_id'), str),
           'manual': bool, 'sandbox': dict, 'questions': list}
 DRAFT_PROMPT = ('Read the batch JSON at <file path>, apply the request offline, then publish '
           'with refresh --config-file PATH.')
@@ -40,7 +40,7 @@ def batch_config(batch, context):
 
 def publish(batch, context):
     config = batch_config(batch, context)
-    write_config(context['reference'], config, context['state']['reply_parent'])
+    write_config(context['reference'], config, context['record']['thread'])
     link_config(context['issue_id'], context['reference'], DELEGATION_KEY)
     context['record'] = {'thread': config['dispatch_thread'],
                          'draft_attachment_id': attachment(context['reference'])['id']}
@@ -58,8 +58,6 @@ def configured(context):
     if context['record'].get('dispatched') and args.config is None and not state.get('draft'):
         raise Completed(FINISHED_INSTRUCTION, target=FINISHED)
     context['installed'] = read_config(source)
-    if args.thread:
-        state['reply_parent'] = args.thread
     if (args.config is not None or not context['reference']) and not state.get('draft'):
         if context['reference'] and not (context['record'].get('dispatched') and args.thread and args.thread != context['record']['thread']):
             raise ValueError('Use refresh; a new batch needs a new --thread after full dispatch.')
@@ -88,7 +86,7 @@ def view(context):
 
 
 def outer_owner(context):
-    return {'issue_id': context['issue_id'], 'thread': context['state']['reply_parent'],
+    return {'issue_id': context['issue_id'], 'thread': context['record']['thread'],
             'id': None, 'content': '/note'}
 
 
@@ -133,6 +131,7 @@ def dispatch(args, context):
         missing = [key for key in ('name', 'request', 'direction', 'scope') if not (request.get(key) or '').strip()]
         if missing or request['direction'] not in {d['name'] for d in context['installed']['directions']}:
             raise ValueError('issues[' + str(index) + '] needs an installed direction and: ' + ', '.join(missing))
+        request['title'] = request_title(request)
     progress = record.setdefault('items', [{} for _ in batch])
     failures = []
     for index, (request, item) in enumerate(zip(batch, progress)):
@@ -158,10 +157,11 @@ def dispatch_item(context, request, record, index):
             save_progress(context)
             return
     branch = request['branch']
-    title = request.get('title') or request['name']
+    title = request['title']
     url = issue_link(request.get('github_issue'))
     if url:
-        title = f'[{title}]({url})'
+        prefix, summary = title.split(': ', 1)
+        title = f'{prefix}: [{summary}]({url})'
     if not record.get('issue_id'):
         child = cli('issue', 'create', '--title', title, '--description-stdin', '--parent', context['issue_id'],
                     '--project', context['main']['project_id'], '--assignee-id', request['developer_id'],

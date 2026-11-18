@@ -75,11 +75,19 @@ working copy. `refresh --config-file PATH` validates and publishes the whole bat
 including its first publication, then enters addressed-owner `outer_decide`. The final
 refresh action returns minimal `this_round_reply_guidance` for a brief change
 explanation; the engine publishes the native questionnaire in self
-`MULTICA_ISSUE_ID` and the current thread. Outer `confirm` directly dispatches;
+`MULTICA_ISSUE_ID` and the original request thread. Outer `confirm` directly dispatches;
 `request_changes --change-request TEXT` returns to MAIN drafting with that request. No comment
 confirmation scan or responder restriction is added. Partial failures retain
 checkpoints and retry with `confirm` without restarting successful children.
 Once a child exists, resume dispatch rather than editing or refreshing.
+The batch envelope owns `main_issue_id` and the original `dispatch_thread`.
+Attachment publication and outer ownership use that saved thread, not the latest
+callback's `reply_parent`. Child approval and completion read the same envelope;
+starting another MAIN does not retarget existing children.
+Dispatch requires `action` plus a summary, or a matching prefixed `title`, and
+constructs `<action>(<selected direction>): <summary>` before creating any child.
+Actions are not restricted to a fixed list. A missing local bundle is a runtime
+prerequisite, not permission to use manual or system-SoP dispatch.
 
 MAIN passes a short name;
 the configured direction prefix formats the feature branch. The child uses its
@@ -97,7 +105,7 @@ Both roles use the current issue folder and the same metadata record. The native
 agent ID guards each phase. MAIN's `name: tree-horizontal-more` plus installed
 `branch_prefix: feat/frontend` binds `feat/frontend/tree-horizontal-more` before dispatch.
 Developer owns develop; Reviewer owns review and integration recovery. Manual approval
-is addressed to MAIN's delegator. Neither role names or creates the branch.
+is addressed to the human in MAIN's dispatch thread. Neither role names or creates the branch.
 Later actions reject another branch or repository; review rejects a changed submitted HEAD.
 Integration accepts the approved revision or its scripted rebase checkpoint, not unrelated source edits.
 Dispatch prepares the selected local branch and one issue-owned worktree.
@@ -110,8 +118,9 @@ A manual config adds the manual label before the child starts. Review never
 creates a checkout or switches branches. Automated review approval passes through
 the manual-config diamond directly to the registered `final_approve` action; there
 is no automatic approval State.
-Manual approval addresses the engine questionnaire to the concrete delegator agent,
+Manual approval addresses the engine questionnaire to the human in MAIN,
 using `main_issue_id` and `dispatch_thread` from the linked delegation JSON.
+Its actor `id` is null: it must not trigger MAIN to answer human approval automatically.
 Outer approval directly runs the same action; outer rework passes correction arguments
 straight to Developer through a native mention/steer handoff. The engine runs the action and the
 integration-result diamond until a State is reached. Integration checks the exact approved HEAD, rebases/tests,
