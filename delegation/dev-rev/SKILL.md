@@ -15,8 +15,16 @@ Before submit, inspect pending main product changes and pass a meaningful
 Submission commits product edits without private/local paths, pushes main including
 local commits, then rebases and checks the feature before review. Keep credentials
 and generated/local paths ignored; never put private data in product files.
-Reviewer recovers clean Git failures with `environment_repaired`; source conflicts
-return to Developer. Recovery before review cannot bypass configured feature approval.
+Reviewer recovers clean Git failures with `environment_repaired`. Human working
+edits on main are stashed while main advances, then restored. Restore conflicts
+stay on main with the stash retained and reported; feature delivery continues.
+If upstream advances after a rejected push, recovery verifies both revisions,
+publishes the rebased feature directly and leaves conflicted local main untouched.
+Main working edits do not require Developer resubmission.
+A completed rebase without a checkpoint must match the clean replay of the
+approved commit onto main; keep the original approval revision. Only corrections
+to the feature require resubmission, review and configured outer approval.
+Recovery before review cannot bypass configured feature approval.
 
 Follow the returned choices and reply guidance. Post any requested handoff,
 then end the turn without running the receiving role's callback.

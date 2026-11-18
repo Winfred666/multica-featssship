@@ -3,6 +3,7 @@ from pathlib import Path
 import os
 import json
 import re
+import sys
 
 from featssship import check_repo, clean, cli, comment, feature_config, git, run, test, wake_agent
 from sop import Branch, Completed, Option, Parameter, State, Workflow
@@ -17,6 +18,7 @@ INTEGRATION_PROMPT = ('Reviewer: quickly judge and recover this integration/publ
                       'Preserve interrupted Git/rebase state; do not abort or restart it blindly. '
                       'Repair within existing authorization without editing tracked product code or bypassing required checks. '
                       'Hash changes from a clean rebase alone do not require source rework. '
+                      'Human working edits on main are stashed/restored during integration; restore conflicts stay on main, not Developer rework. '
                       'Choose rework only when Developer corrections are needed; retain submission, review and any required outer approval.')
 
 
@@ -227,7 +229,7 @@ def final_note(context):
         issue = json.loads(run('gh', 'issue', 'view', source, '--json', 'state,title,url'))
         if issue['state'] == 'CLOSED':
             note += f" GitHub issue [{issue['title']}]({issue['url']}) solved and closed."
-    return note + '\n\n' + state['diff']
+    return note + '\n\n' + state['diff'] + ('\n\n' + state['main_restore_warning'] if state.get('main_restore_warning') else '')
 
 
 def verdict(args, context):
@@ -264,6 +266,30 @@ def retained_rebase(repo):
                  if (repo / git(repo, 'rev-parse', '--git-path', name)).is_dir()), None)
 
 
+def approved_rebase_tree(repo, binding, approved, upstream):
+    """Reconstruct a clean replay without touching the index or retained rebase."""
+    try:
+        if len(git(repo, 'rev-list', '--parents', '-n', '1', approved).split()) != 2:
+            raise ValueError('The approved feature must be one non-merge commit.')
+        git(repo, 'merge-base', '--is-ancestor', approved + '^', upstream)
+        git(repo, 'merge-base', '--is-ancestor', upstream, 'origin/' + binding['parent_branch'])
+        return git(repo, 'merge-tree', '--write-tree', '--merge-base=' + approved + '^',
+                   upstream, approved).splitlines()[0]
+    except ValueError as error:
+        raise ValueError('Cannot verify a clean replay of the approved feature onto main. '
+                         'Preserve Git state; only corrections to the feature need Developer resubmission and fresh approval.') from error
+
+
+def verify_approved_revision(repo, binding, approved, revision='HEAD'):
+    candidate = git(repo, 'rev-parse', revision)
+    if candidate == approved:
+        return
+    parents = git(repo, 'rev-list', '--parents', '-n', '1', candidate).split()
+    if (len(parents) != 2 or
+            git(repo, 'rev-parse', candidate + '^{tree}') != approved_rebase_tree(repo, binding, approved, parents[1])):
+        raise ValueError(f'Revision {candidate} is not a clean replay of the approved feature; changed code needs Developer resubmission and fresh approval.')
+
+
 def merge_approved(args, context):
     """```dot
     digraph merge_approved { node [shape=box]; check [label="Reviewer: verify approved HEAD"];
@@ -282,10 +308,10 @@ def merge_approved(args, context):
             if ((rebase / 'orig-head').read_text().strip() != commit or
                     (rebase / 'head-name').read_text().strip() != 'refs/heads/' + binding['branch']):
                 raise ValueError('The retained rebase does not belong to the approved revision and MAIN branch. Preserve it for Reviewer judgment.')
+            approved_rebase_tree(repo, binding, state['commit'], (rebase / 'onto').read_text().strip())
         else:
             shared_repo(context)
-            if git(repo, 'rev-parse', 'HEAD') != commit:
-                raise ValueError('Integrate the exact approved revision; changed code needs a new review.')
+            verify_approved_revision(repo, binding, state['commit'])
             test(repo, binding['test_command'])
         if binding['manual'] and git(repo, 'ls-remote', 'origin', 'refs/heads/' + binding['branch']).split()[0] != state['commit']:
             raise ValueError('The remote feature branch changed after submission.')
@@ -295,10 +321,14 @@ def merge_approved(args, context):
             git(repo, 'fetch', 'origin', binding['parent_branch'])
             upstream = git(repo, 'rev-parse', 'origin/' + binding['parent_branch'])
             git(repo, 'rebase', upstream)
+        shared_repo(context)
+        verify_approved_revision(repo, binding, state['commit'])
         commit = git(repo, 'rev-parse', 'HEAD')
         state.update(integrated=commit, feature=feature_link(repo, binding, commit), diff=diff_report(repo, binding))
         test(repo, binding['test_command'])
-        advance_parent(repo, binding, commit)
+        warning = advance_parent(repo, binding, commit, approved=state['commit'])
+        if warning:
+            state['main_restore_warning'] = warning
         state.pop('integration_error', None)
         result = finish(context)
     except ValueError as error:
@@ -307,19 +337,52 @@ def merge_approved(args, context):
     return result
 
 
-def advance_parent(repo, binding, integrated, previous=None):
+def advance_parent(repo, binding, integrated, previous=None, approved=None):
     ref = 'refs/heads/' + binding['parent_branch']
     parents = parent_worktrees(repo, binding)
     old = git(repo, 'for-each-ref', '--format=%(objectname)', ref)
     if previous and old not in (previous, integrated):
         raise ValueError('The local parent changed during publication; preserve it and retry against its latest tip.')
+    if old == integrated:
+        return ''
+    warning = ''
     if parents:
+        parent = parents[0]
+        if retained_rebase(parent) or any((parent / git(parent, 'rev-parse', '--git-path', name)).exists()
+                                         for name in ('MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD')):
+            raise ValueError('Main has an interrupted Git operation; preserve it for Reviewer recovery.')
+        if approved and git(parent, 'ls-files', '--unmerged'):
+            try:
+                verify_approved_revision(repo, binding, approved, old)
+            except ValueError as error:
+                raise ValueError('Cannot verify local main as the approved feature; preserve main and its conflicts for Reviewer recovery.') from error
+            # Publication pushes the verified commit, not the checked-out main ref.
+            warning = (f'Main conflict and existing stashes left untouched in {parent}; '
+                       f'local main remains at {old}. Publishing verified {integrated} directly.')
+            print(warning, file=sys.stderr)
+            return warning
+        stash = None
+        if git(parent, 'status', '--porcelain'):
+            git(parent, 'stash', 'push', '--include-untracked', '-m', 'featssship: preserve main working edits')
+            stash = git(parent, 'rev-parse', 'refs/stash')
         command = ('reset', '--keep') if previous else ('merge', '--ff-only')
-        git(parents[0], *command, integrated)
+        try:
+            git(parent, *command, integrated)
+        finally:
+            if stash:
+                try:
+                    git(parent, 'stash', 'apply', '--index', stash)
+                except ValueError as error:
+                    warning = f'Main edits could not be restored automatically in {parent}; stash {stash} retained. {error}'
+                    print(warning, file=sys.stderr)
+                else:
+                    if git(parent, 'rev-parse', 'refs/stash') == stash:
+                        git(parent, 'stash', 'drop', 'stash@{0}')
     else:
         if old and not previous:
             git(repo, 'merge-base', '--is-ancestor', old, integrated)
         git(repo, 'update-ref', ref, integrated, old)
+    return warning
 
 
 def done_view(context):
@@ -359,7 +422,9 @@ def push(args, context):
             git(repo, 'rebase', '--onto', commit, base)
         commit = git(repo, 'rev-parse', 'HEAD')
         test(repo, binding['test_command'])
-        advance_parent(repo, binding, commit, parent)
+        warning = advance_parent(repo, binding, commit, parent)
+        if warning:
+            state['main_restore_warning'] = warning
         return finish(context, commit, remote, parent)
     except ValueError as error:
         if repo.is_dir() and state.get('amend_draft') and not retained_rebase(repo):
