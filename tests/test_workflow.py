@@ -11,10 +11,22 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 MULTICA = shutil.which('multica')
 sys.path.insert(0, str(ROOT / 'installation'))
-from featssship import CONFIG_KEY, config_ref, feature_branch, request_config
+from featssship import CONFIG_KEY, config_ref, feature_branch, request_config, request_title
 
 
 class BranchNamingTests(unittest.TestCase):
+    def test_required_direction_title(self):
+        for action in ('fix', 'feat', 'simplify', 'delete'):
+            request = {'name': 'candidate', 'direction': 'install_sop', 'action': action, 'title': 'Use saved config'}
+            expected = action + '(install_sop): Use saved config'
+            self.assertEqual(request_title(request), expected)
+            self.assertEqual(request_title({**request, 'title': expected}), expected)
+            self.assertEqual(request_title({k: v for k, v in {**request, 'title': expected}.items() if k != 'action'}), expected)
+        for patch in ({'action': ''}, {'title': 'fix(general): Wrong direction'},
+                      {'title': 'feat(install_sop): Wrong action'}):
+            with self.assertRaises(ValueError):
+                request_title({**request, 'action': 'fix', **patch})
+
     def test_direction_developer_precedence(self):
         installed = {'installed_developer_id': 'global', 'directions': [
             {'name': 'frontend', 'developer_id': 'direction'}, {'name': 'backend'}]}

@@ -115,6 +115,19 @@ def feature_config(issue):
     return config
 
 
+def request_title(request):
+    title = request.get('title') or request['name']
+    prefix = re.fullmatch(r'([a-z][a-z0-9_-]*)\(([^()]+)\):\s*(.+)', title)
+    action = request.get('action') or (prefix[1] if prefix else '')
+    if not re.fullmatch(r'[a-z][a-z0-9_-]*', action):
+        raise ValueError('Supply action (for example fix, feat or simplify), or a prefixed title.')
+    if prefix:
+        if prefix[1] != action or prefix[2] != request['direction']:
+            raise ValueError('Title prefix must match action and the selected installation direction.')
+        title = prefix[3]
+    return f'{action}({request["direction"]}): {title}'
+
+
 def run(*words, cwd=None, input=None):
     result = subprocess.run(words, cwd=cwd, input=input, text=True, capture_output=True)
     if result.returncode:
