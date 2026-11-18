@@ -7,10 +7,9 @@ import tempfile
 
 from featssship import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, config_ref, delegation_config, download_config, entry_command, git, has_manual, link_config, read_config, request_config, wake_agent, write_config
 from github_issue import issue_link
-from sop import FINISHED, Completed, Option, Parameter, State, Workflow
+from sop import FINISHED, Option, Parameter, State, Workflow
 
 SOP_DISPLAY_NAME = 'multica-featssship-delegation'
-FINISHED_INSTRUCTION = 'End this turn silently.'
 
 FIELDS = {**dict.fromkeys(('name', 'request', 'direction', 'title', 'scope', 'github_issue', 'branch', 'parent_branch', 'developer_id'), str),
           'manual': bool, 'sandbox': dict, 'questions': list}
@@ -55,14 +54,12 @@ def configured(context):
     context.update(main=main, reference=config_ref(main, DELEGATION_KEY),
                    record=json.loads(main.get('metadata', {}).get(DISPATCH_KEY, '{}')))
     state = context['state']
-    if context['record'].get('dispatched') and args.config is None and not state.get('draft'):
-        raise Completed(FINISHED_INSTRUCTION, target=FINISHED)
     context['installed'] = read_config(source)
     if args.thread:
         state['reply_parent'] = args.thread
-    if (args.config is not None or not context['reference']) and not state.get('draft'):
-        if context['reference'] and not (context['record'].get('dispatched') and args.thread and args.thread != context['record']['thread']):
-            raise ValueError('Use refresh; a new batch needs a new --thread after full dispatch.')
+    if (args.config is not None or not context['record']) and not state.get('draft'):
+        if context['record']:
+            raise ValueError('Use refresh to edit the current batch.')
         if not args.thread:
             raise ValueError('Start with --thread <original MAIN request comment>.')
         batch = json.loads(args.config) if args.config is not None else {'issues': [{}]}
@@ -142,10 +139,10 @@ def dispatch(args, context):
             item.pop('remote_reserved', None)
         except ValueError as error:
             failures.append('issues[' + str(index) + '] ' + request['name'] + ': ' + str(error))
-    record['dispatched'] = all(item.get('dispatched') for item in progress)
-    save_progress(context)
     if failures:
+        save_progress(context)
         raise ValueError('\n'.join(failures))
+    cli('issue', 'metadata', 'delete', context['issue_id'], '--key', DISPATCH_KEY)
 
 
 def dispatch_item(context, request, record, index):

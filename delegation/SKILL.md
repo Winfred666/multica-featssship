@@ -13,6 +13,9 @@ From the target repository in MAIN DEV:, run
 Confirmation resolves Git from this installed bundle's target checkout, even
 when the callback's saved workdir is MAIN's task context. Retry partial dispatch
 with `confirm`; saved children are reused.
+Successful dispatch clears batch progress and the SoP state, keeping child
+configuration references. Later `--help` shows this guide; start the next draft
+with `--thread <request UUID>` and optional `--config`.
 
 Edit the shown JSON offline and run the returned `refresh --config-file PATH`
 command to publish it. Outer confirms or requests changes through the native

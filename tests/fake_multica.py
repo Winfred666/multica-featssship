@@ -74,6 +74,9 @@ def main():
     elif args[:2] == ['issue', 'status']:
         result = db['issues'][args[2]]
         result.update(status=args[3], status_category=args[3])
+    elif args[:2] == ['issue', 'assign']:
+        result = db['issues'][args[2]]
+        result.update(assignee_id=option('to-id'), assignee_type='agent')
     elif args[:2] == ['label', 'list']:
         result = [{'id': name, 'name': name} for name in ('dev', 'manual')]
     elif args[:3] == ['issue', 'label', 'add']:

@@ -123,7 +123,7 @@ class WorkflowFixture(unittest.TestCase):
             self.installer('publish', '--patch', '{}')
             self.assertEqual(self.installer('confirm')['status'], 'finished')
 
-    def test_confirmation_from_main_task_reuses_child(self):
+    def test_dispatch_completion_help_and_reentry(self):
         from packages import build
         name = 'multica-featssship'
         skills = self.repo / '.agents/skills'
@@ -161,9 +161,25 @@ class WorkflowFixture(unittest.TestCase):
         worktree = self.repo / '.git/featsship' / child_id
         self.assertEqual(self.call('git', 'branch', '--show-current', cwd=worktree).stdout.strip(),
                          'feat/messages/callback')
-        progress = json.loads(self.db()['issues'][main['id']]['metadata'][DISPATCH_KEY])
-        self.assertEqual(progress['items'], [{'issue_id': child_id, 'dispatched': True}])
+        metadata = self.db()['issues'][main['id']]['metadata']
+        self.assertNotIn(DISPATCH_KEY, metadata)
+        self.assertNotIn('sop.' + name, metadata)
+        self.assertEqual(config_ref(child, DELEGATION_KEY), {**reference, 'index': 0})
+        self.assertEqual(self.document(child, DELEGATION_KEY), batch)
         self.assertFalse(any(call[:2] == ['issue', 'create'] for call in self.db()['calls']))
+
+        help_text = self.call(MULTICA, 'sop', 'run', name, '--help', cwd=task, env=env).stdout
+        self.assertEqual(help_text.strip(), (skills / name / 'SKILL.md').read_text().split('---', 2)[2].strip())
+        self.assertEqual(self.db()['issues'][main['id']]['metadata'], metadata)
+        new_thread = str(uuid.uuid4())
+        result = self.call(MULTICA, 'sop', 'run', name, '--thread', new_thread, cwd=task, env=env)
+        self.assertEqual(json.loads(result.stdout)['status'], 'edit')
+        state = json.loads(self.db()['issues'][main['id']]['metadata']['sop.' + name])
+        draft = json.loads(Path(state['draft']['path']).read_text())
+        self.assertEqual(draft['issues'], [{'direction': 'message'}])
+        self.assertEqual(draft['dispatch_thread'], new_thread)
+        self.assertNotEqual(state['draft']['reference'], reference)
+        self.assertEqual(self.document(child, DELEGATION_KEY), batch)
 
     def test_standalone_bundles_and_packaged_installer(self):
         from packages import build
