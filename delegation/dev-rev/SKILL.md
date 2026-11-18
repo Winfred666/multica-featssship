@@ -10,6 +10,14 @@ From the prepared issue worktree on MAIN's selected branch, run
 `multica sop run multica-featssship-develop-review`.
 
 Keep one feature commit; amend corrections without switching branches.
+Before submit, inspect pending main product changes and pass a meaningful
+`--main-subject`, usually `simplify(<scope>): <change>`, when main needs a commit.
+Submission commits product edits without private/local paths, pushes main including
+local commits, then rebases and checks the feature before review. Keep credentials
+and generated/local paths ignored; never put private data in product files.
+Reviewer recovers clean Git failures with `environment_repaired`; source conflicts
+return to Developer. Recovery before review cannot bypass configured feature approval.
+
 Follow the returned choices and reply guidance. Post any requested handoff,
 then end the turn without running the receiving role's callback.
 

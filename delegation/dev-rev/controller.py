@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 import json
+import re
 
 from featssship import check_repo, clean, cli, comment, feature_config, git, run, test, wake_agent
 from sop import Branch, Completed, Option, Parameter, State, Workflow
@@ -51,7 +52,9 @@ def review_view(context):
 
 
 def integration_view(context):
-    return {'instruction': INTEGRATION_PROMPT + '\n\n' + context['state']['integration_error']}
+    stage = ('Main publication and feature checks must succeed before review. Retry preparation, not approval.\n\n'
+             if context['state'].get('submission') else '')
+    return {'instruction': stage + INTEGRATION_PROMPT + '\n\n' + context['state']['integration_error']}
 
 
 def observed(context):
@@ -89,27 +92,112 @@ def feature_link(repo, binding, commit):
     return f'[{git(repo, "log", "-1", "--format=%s", commit)}]({remote}/commit/{commit})'
 
 
+def parent_worktrees(repo, binding):
+    ref = 'refs/heads/' + binding['parent_branch']
+    paths = [block.splitlines()[0][9:] for block in git(repo, 'worktree', 'list', '--porcelain').split('\n\n')
+             if '\nbranch ' + ref + '\n' in '\n' + block + '\n']
+    return [Path(path) for path in paths if git(path, 'rev-parse', '--is-inside-work-tree') == 'true']
+
+
+def publish_main(repo, binding, subject):
+    """Commit product paths only; leave excluded edits and index entries intact."""
+    branch = binding['parent_branch']
+    parents = parent_worktrees(repo, binding)
+    git(repo, 'fetch', 'origin', branch)
+    remote = 'origin/' + branch
+    if parents:
+        parent = parents[0]
+        # Git ignores plus these private/local paths also protect already-staged files.
+        exclusions = ('.env*', '*credentials*', '*secret*', '*.pem', '*.key',
+                      '.agents/**', '.multica/**', '.state/**', '.venv/**',
+                      '__pycache__/**', '*.pyc', 'build/**', 'dist/**', 'generated/**',
+                      'logs/**', 'workdirs/**', 'config.local.*')
+        paths = ('.', *(':(glob,exclude)**/' + pattern for pattern in exclusions))
+        pending = set(git(parent, 'diff', '--name-only', '-z', 'HEAD', '--', *paths).split('\0'))
+        pending.update(git(parent, 'ls-files', '--others', '--exclude-standard', '-z', '--', *paths).split('\0'))
+        pending.difference_update(git(parent, 'ls-files', '--cached', '--ignored', '--exclude-standard', '-z').split('\0'))
+        pending.discard('')
+        if pending:
+            if not subject or not re.fullmatch(r'[a-z]+(?:\([^()\n]+\))?!?: [^\n]+', subject):
+                raise ValueError('Inspect pending main product changes and supply --main-subject with a meaningful semantic subject, usually simplify(<scope>): <change>.')
+            literals = [':(literal)' + path for path in sorted(pending)]
+            git(parent, 'add', '--all', '--', *literals)
+            git(parent, 'commit', '--only', '-m', subject, '--', *literals)
+        git(parent, 'merge', '--ff-only', remote)
+    else:
+        local = git(repo, 'rev-parse', branch)
+        base = git(repo, 'merge-base', local, remote)
+        if base == local:
+            git(repo, 'update-ref', 'refs/heads/' + branch, git(repo, 'rev-parse', remote), local)
+        else:
+            git(repo, 'merge-base', '--is-ancestor', remote, local)
+    ref = 'refs/heads/' + branch
+    git(repo, 'push', 'origin', ref + ':' + ref)
+
+
 def submit(args, context):
     """```dot
-    digraph submit { node [shape=box]; check [label="Verify repository, MAIN branch and one feature commit"];
-        push [label="Test; push only if manual; request Reviewer"]; check -> push; }
+    digraph submit { node [shape=box]; main [label="Commit main product edits; push all local main commits"];
+        prepare [label="Rebase feature; verify one commit; run required checks"];
+        review [label="Push feature only if manual; request Reviewer"];
+        recover [label="Reviewer: recover Git failure; source conflicts to Developer"];
+        main -> prepare -> review; main -> recover [label="error"]; prepare -> recover [label="error"]; }
     ```"""
-    repo, binding = shared_repo(context), context['binding']
-    git(repo, 'fetch', 'origin', binding['parent_branch'])
-    revisions = 'origin/' + binding['parent_branch'] + '..HEAD'
-    if git(repo, 'rev-list', '--count', revisions) != '1' or git(repo, 'rev-list', '--merges', revisions):
-        raise ValueError('Keep one feature commit; amend corrections. Do not create merge commits.')
-    test(repo, binding['test_command'])
-    ref = 'refs/heads/' + binding['branch']
-    if binding['manual']:
-        git(repo, 'push', '--force-with-lease=' + ref + ':' + context['state'].get('commit', context['issue']['metadata'].get('git_base_commit', '')), 'origin', 'HEAD:' + ref)
+    repo, binding, state = shared_repo(context), context['binding'], context['state']
     feature = git(repo, 'rev-parse', 'HEAD')
-    context['state'].pop('integrated', None)
-    context['state'].update(commit=feature,
-                            feature=feature_link(repo, binding, feature), diff=diff_report(repo, binding))
-    cli('issue', 'status', context['issue_id'], 'in_review')
-    return {'this_round_reply_guidance': handoff_guidance(context, 'reviewer',
-            args.summary + '\n\nVerified: `' + binding['test_command'] + '` passed.')}
+    state.setdefault('submitted', state.get('commit', context['issue']['metadata'].get('git_base_commit', '')))
+    state.pop('integrated', None)
+    state.update(commit=feature, feature=feature_link(repo, binding, feature), diff=diff_report(repo, binding),
+                 submission={'main_subject': args.main_subject})
+    result = prepare_review(args, context)
+    message = (args.summary + '\n\nVerified: `' + binding['test_command'] + '` passed.'
+               if result['phase'] == 'review' else state['integration_error'])
+    result['this_round_reply_guidance'] = handoff_guidance(context, 'reviewer', message)
+    return result
+
+
+def prepare_review(args, context):
+    repo, binding, state = Path.cwd(), context['binding'], context['state']
+    submission = state['submission']
+    if getattr(args, 'main_subject', None):
+        submission['main_subject'] = args.main_subject
+    try:
+        check_repo(repo, binding)
+        rebase = retained_rebase(repo)
+        if rebase:
+            if ((rebase / 'orig-head').read_text().strip() != state['commit'] or
+                    (rebase / 'head-name').read_text().strip() != 'refs/heads/' + binding['branch']):
+                raise ValueError('Preserve the unrelated retained rebase for Reviewer judgment.')
+            git(repo, 'rebase', '--continue')
+        shared_repo(context)
+        publish_main(repo, binding, submission['main_subject'])
+        # Retain the original revision until a failed rebase has been continued.
+        state['commit'] = git(repo, 'rev-parse', 'HEAD')
+        git(repo, 'rebase', 'origin/' + binding['parent_branch'])
+        feature = git(repo, 'rev-parse', 'HEAD')
+        state.update(commit=feature, feature=feature_link(repo, binding, feature), diff=diff_report(repo, binding))
+        revisions = 'origin/' + binding['parent_branch'] + '..HEAD'
+        if git(repo, 'rev-list', '--count', revisions) != '1' or git(repo, 'rev-list', '--merges', revisions):
+            raise ValueError('Keep one feature commit; amend corrections. Do not create merge commits.')
+        test(repo, binding['test_command'])
+        ref = 'refs/heads/' + binding['branch']
+        if binding['manual']:
+            lease = state.get('submitted', context['issue']['metadata'].get('git_base_commit', ''))
+            git(repo, 'push', '--force-with-lease=' + ref + ':' + lease, 'origin', 'HEAD:' + ref)
+        state['submitted'] = feature
+        state.pop('integration_error', None)
+        cli('issue', 'status', context['issue_id'], 'in_review')
+        state.pop('submission')
+        return {'phase': 'review'}
+    except ValueError as error:
+        state['integration_error'] = 'Before review, publication/preparation stopped: ' + str(error)
+        return {'phase': 'integration_error'}
+
+
+def recover(args, context):
+    if context['state'].get('submission'):
+        return prepare_review(args, context)
+    return merge_approved(args, context)
 
 
 def diff_report(repo, binding):
@@ -161,6 +249,7 @@ def verdict(args, context):
     if args.event == 'rework':
         if context['phase'] == 'integration_error':
             state.pop('integration_error', None)
+            state.pop('submission', None)
         cli('issue', 'status', context['issue_id'], 'in_progress')
         if context['phase'] == 'manual_approve':
             wake_agent(context, binding['developer_id'], 'Corrections requested: ' + args.finding)
@@ -213,8 +302,6 @@ def merge_approved(args, context):
         state.pop('integration_error', None)
         result = finish(context)
     except ValueError as error:
-        if context['phase'] == 'manual_approve':
-            raise
         state['integration_error'] = 'Integration stopped: ' + str(error)
         result = {'phase': 'integration_error'}
     return result
@@ -222,14 +309,11 @@ def merge_approved(args, context):
 
 def advance_parent(repo, binding, integrated, previous=None):
     ref = 'refs/heads/' + binding['parent_branch']
-    parents = [block.splitlines()[0][9:] for block in git(repo, 'worktree', 'list', '--porcelain').split('\n\n')
-               if '\nbranch ' + ref + '\n' in '\n' + block + '\n']
-    parents = [path for path in parents if git(path, 'rev-parse', '--is-inside-work-tree') == 'true']
+    parents = parent_worktrees(repo, binding)
     old = git(repo, 'for-each-ref', '--format=%(objectname)', ref)
     if previous and old not in (previous, integrated):
         raise ValueError('The local parent changed during publication; preserve it and retry against its latest tip.')
     if parents:
-        clean(parents[0])
         command = ('reset', '--keep') if previous else ('merge', '--ff-only')
         git(parents[0], *command, integrated)
     else:
@@ -305,8 +389,6 @@ def finish(context, integrated=None, previous=None, parent=None):
             run('git', '--git-dir', str(common), 'push', *lease, 'origin', integrated + ':' + ref)
         except ValueError as error:
             checkout(context, common, integrated)
-            if context['phase'] == 'manual_approve':
-                raise
             if amending:
                 advance_parent(Path.cwd(), binding, parent, integrated)
                 git(Path.cwd(), 'reset', '--keep', state.pop('amend_draft'))
@@ -328,7 +410,9 @@ def finish(context, integrated=None, previous=None, parent=None):
 
 workflow = Workflow(
     State('develop', 'Developer: implement the issue request on MAIN’s feature branch in the current issue folder. '
-          'Keep one feature commit; amend corrections, never merge. Continue any retained rebase, then test and submit.',
+          'Keep one feature commit; amend corrections, never merge. Continue any retained rebase, then submit. '
+          'Inspect main product edits and supply --main-subject, usually simplify(<scope>): <change>; '
+          'submission publishes main, rebases the feature and runs required checks before review.',
           initial=True, precheck=observed, view=enter_develop, owner=owner('developer'), preview='Developer: implement, test and submit the feature.'),
     State('review', REVIEW_PROMPT,
           precheck=observed, owner=owner('reviewer'), view=review_view, preview='Reviewer: inspect the submitted revision and selected review questions.'),
@@ -341,7 +425,8 @@ workflow = Workflow(
           'Verify, then push for automatic replay/publication preserving newer main commits. No fresh review or approval.',
           precheck=observed, owner=owner('developer')),
     Option('submit', prompt='Test and request independent review; push only if manual.', action=submit,
-           params=(Parameter('--summary', 'Delivered behavior and evidence'),)),
+           params=(Parameter('--summary', 'Delivered behavior and evidence'),
+                   Parameter('--main-subject', 'Meaningful semantic subject for pending main product changes', required=False))),
     Option('approve', prompt='Approve the revision; manual config waits for outer approval.', action=verdict,
            params=(Parameter('--finding', 'Review answers and evidence'),)),
     Option('rework', prompt='rework', action=verdict,
@@ -349,23 +434,24 @@ workflow = Workflow(
     Option('cancel', prompt='cancel', action=verdict,
            params=(Parameter('--reason', 'Concrete cancellation blocker'),)),
     Option('final_approve', prompt='approve', action=merge_approved),
-    Option('environment_repaired', prompt='Reviewer recovery completed: retry approved integration with required checks.'),
+    Option('environment_repaired', prompt='Reviewer recovery completed: retry publication with required checks.', action=recover,
+           params=(Parameter('--main-subject', 'Semantic subject for pending main product changes', required=False),)),
     Option('amend', prompt='Explicit outer request: recreate the delivered feature checkout and reopen the issue.', action=amend),
     Option('push', prompt='Publish the amended commit, clean up and mark the native issue done.', action=push),
     Branch('approval', 'manual config?',
            select=lambda args, context: 'manual_approve' if context['binding']['manual'] else 'final_approve'),
-    Branch('merge_result', 'Integration successful?'),
+    Branch('merge_result', 'Publication successful?'),
     edges=(
         ('develop', 'submit'), ('develop', 'cancel'),
-        ('submit', 'review'),
+        ('submit', 'merge_result'),
         ('review', 'approve'), ('review', 'rework'), ('review', 'cancel'),
         ('approve', 'approval'),
         ('approval', 'manual_approve'), ('approval', 'final_approve'),
         ('manual_approve', 'rework'), ('manual_approve', 'final_approve'), ('manual_approve', 'cancel'),
         ('final_approve', 'merge_result'),
-        ('merge_result', 'integration_error'), ('merge_result', 'done'),
+        ('merge_result', 'integration_error'), ('merge_result', 'done'), ('merge_result', 'review'),
         ('integration_error', 'environment_repaired'), ('integration_error', 'rework'),
-        ('environment_repaired', 'final_approve'),
+        ('environment_repaired', 'merge_result'),
         ('rework', 'develop'), ('cancel', Workflow.FINISHED),
         ('done', 'amend'), ('amend', 'amending'),
         ('amending', 'push'), ('push', 'done'),
