@@ -88,17 +88,7 @@ def main():
             db['issues'][args[3]].setdefault('attachments', []).append(attachment)
         db['comments'].append(result)
     elif args[:3] == ['issue', 'comment', 'list']:
-        rows = [row for row in db['comments'] if row['issue_id'] == args[3]]
-        index = {row['id']: row for row in rows}
-        def root(row):
-            while row.get('parent_id'):
-                row = index[row['parent_id']]
-            return row['id']
-        if option('thread'):
-            target = root(index[option('thread')])
-            rows = [row for row in rows if root(row) == target]
-            rows = rows[:1] + rows[1:][-int(option('tail', '30')):]
-        result = rows
+        result = [row for row in db['comments'] if row['issue_id'] == args[3]]
     else:
         raise ValueError('Unsupported CLI call: ' + str(args))
     path.write_text(json.dumps(db))
