@@ -3,7 +3,7 @@
 import re
 import shlex
 
-from featssship import check_repo, cli, config_ref, exclude_local, feature_branch, link_config, repo_root, write_config
+from featssship import check_repo, cli, config_ref, exclude_local, feature_branch, link_config, repo_root
 from packages import build
 
 START, END = '<!-- featssship:installation -->', '<!-- /featssship:installation -->'
@@ -60,7 +60,7 @@ def validate(config):
         raise ValueError('Select distinct MAIN, Developer and Reviewer agents.')
 
 
-def agent(config, role, issue, state):
+def agent(config, role, issue):
     key = 'installed_' + role + '_id'
     selected = config.get(key) or config.get(role, {}).get('id')
     if not selected:
@@ -75,8 +75,9 @@ def agent(config, role, issue, state):
         created = cli(*words)
         selected = created['id']
     if config.get(key) != selected:
-        config[key] = selected
-        write_config(config_ref(issue), config, state.get('reply_parent'))
+        reference = {**config_ref(issue), key: selected}
+        link_config(issue['id'], reference)
+        issue['metadata']['featssship.config'] = reference
     data = cli('agent', 'get', selected)
     if not data.get('runtime_id') or data.get('workspace_id') != issue['workspace_id']:
         raise ValueError('Select an agent bound to a runtime in the target workspace.')
@@ -87,9 +88,9 @@ def main_root(config, issue, state, save_state):
     if state.get('main_issue_id'):
         root = cli('issue', 'get', state['main_issue_id'])
         config['installed_delegator_id'] = root['assignee_id']
-        agent(config, 'delegator', issue, state)
+        agent(config, 'delegator', issue)
     else:
-        main = agent(config, 'delegator', issue, state)
+        main = agent(config, 'delegator', issue)
         root = cli('issue', 'create', '--title', 'MAIN DEV: ' + config['repository'].rstrip('/').rsplit('/', 1)[-1].removesuffix('.git') + ' feature ship',
                    '--description-stdin', '--project', issue['project_id'], '--allow-duplicate',
                    '--assignee-id', main, '--status', 'backlog',
@@ -110,8 +111,8 @@ def execute(config, issue, state, save_state):
         cli('issue', 'update', issue['id'], '--project', state['project_id'], '--no-start')
         issue['project_id'] = state['project_id']
     root = main_root(config, issue, state, save_state)
-    developer = agent(config, 'developer', issue, state)
-    reviewer = agent(config, 'reviewer', issue, state)
+    developer = agent(config, 'developer', issue)
+    reviewer = agent(config, 'reviewer', issue)
     if developer == reviewer or root['assignee_id'] in (developer, reviewer):
         raise ValueError('Select distinct MAIN, Developer and Reviewer agents so MAIN only dispatches and receives.')
     command = deploy(config, issue, root)

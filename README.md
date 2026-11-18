@@ -78,6 +78,5 @@ installation-wide Developer. Submit with `publish --patch '<JSON>'`; outer still
 confirms installation. The directions array replaces the whole list, so retain
 existing directions, scopes and questions.
 
-Edits publish attachment revisions with the same filename. Use the latest
-revision and serialize edits. See [workflow details](docs/workflow.md) for
-configuration transport and implementation notes.
+Draft publication writes config revisions; confirmation checkpoints role IDs in
+metadata without publishing config. Use the latest draft and serialize edits.

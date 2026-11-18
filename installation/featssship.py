@@ -38,14 +38,11 @@ def download_config(reference, directory):
 
 def read_config(reference):
     with tempfile.TemporaryDirectory(prefix='.featssship-', dir=Path.cwd()) as directory:
-        return json.loads(download_config(reference, directory).read_text())
+        return json.loads(download_config(reference, directory).read_text()) | {
+            key: value for key, value in reference.items() if key.startswith('installed_')}
 
 
 def write_config(reference, config, parent=None, message=' '):
-    return write_artifact(reference, json.dumps(config, indent=2) + '\n', parent, message)
-
-
-def write_artifact(reference, content, parent=None, message=' '):
     # TODO: Replace immutable attachment revisions with native deliverable update.
     # The stable owner/filename reference resolves the newest revision, across issues.
     if not parent:
@@ -53,7 +50,7 @@ def write_artifact(reference, content, parent=None, message=' '):
         parent = roots[-1]['id'] if roots else None
     with tempfile.TemporaryDirectory(prefix='.featssship-', dir=Path.cwd()) as directory:
         path = Path(directory) / reference['filename']
-        path.write_text(content)
+        path.write_text(json.dumps(config, indent=2) + '\n')
         # The caller supplies change context; the engine publishes the questionnaire.
         words = ['issue', 'comment', 'add', reference['issue_id'], '--content', message, '--attachment', str(path)]
         if parent:
