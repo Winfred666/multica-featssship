@@ -19,6 +19,8 @@ INTEGRATION_PROMPT = ('Reviewer: quickly judge and recover this integration/publ
                       'Repair within existing authorization without editing tracked product code or bypassing required checks. '
                       'Hash changes from a clean rebase alone do not require source rework. '
                       'Human working edits on main are stashed/restored during integration; restore conflicts stay on main, not Developer rework. '
+                      'Resolve a conflict when the intended newer feature is clear; commit time alone is not semantic evidence. '
+                      'Otherwise report the ambiguity to MAIN with report_conflict. '
                       'Choose rework only when Developer corrections are needed; retain submission, review and any required outer approval.')
 
 
@@ -29,7 +31,8 @@ def owner(role):
 def outer_owner(context):
     binding = context['binding']
     return {'issue_id': binding['main_issue_id'], 'thread': binding['dispatch_thread'],
-            'id': None, 'content': 'Review passed. Approve integration or return corrections to Developer.'}
+            'id': None, 'content': ('Resolve upstream versus incoming feature intent.' if context['phase'] == 'conflict_decide'
+                                  else 'Review passed. Approve integration or return corrections to Developer.')}
 
 
 def handoff_guidance(context, role, message):
@@ -56,7 +59,32 @@ def review_view(context):
 def integration_view(context):
     stage = ('Main publication and feature checks must succeed before review. Retry preparation, not approval.\n\n'
              if context['state'].get('submission') else '')
-    return {'instruction': stage + INTEGRATION_PROMPT + '\n\n' + context['state']['integration_error']}
+    return {'instruction': stage + INTEGRATION_PROMPT + '\n\n' + context['state']['integration_error'] +
+            '\n\n' + context['state'].get('conflict_decision', '')}
+
+
+def report_conflict(args, context):
+    context['state']['conflict_comparison'] = args.comparison
+    return {'this_round_reply_guidance': 'Explain upstream versus incoming with one minimal visual in the MAIN dispatch thread. '
+            'Use the actual feature descriptions and conflicting files; do not infer newer intent from timestamps. '
+            'The native questionnaire forwards the decision to MAIN. End this turn without choosing for outer.'}
+
+
+def conflict_view(context):
+    return {'instruction': 'Which feature should survive? Upstream = main; incoming = this feature. '
+            'Custom supplies resolution instructions to Reviewer.\n\n' + context['state']['conflict_comparison']}
+
+
+def choose_conflict(args, context):
+    decision = {'use_upstream': 'Keep upstream main in the reported conflict.',
+                'use_incoming': 'Keep the incoming feature in the reported conflict.',
+                'custom_resolution': getattr(args, 'steer', '')}[args.event]
+    context['state']['conflict_decision'] = 'Outer conflict decision: ' + decision
+    wake_agent(context, context['binding']['reviewer_id'],
+               decision + ' Resolve only the reported conflict, preserve Git state and run required checks. '
+               'Do not treat this content decision as approval of unrelated edits or alter approval checkpoints. '
+               'If the resolved revision needs fresh review, use the existing rework/submission path.')
+    return {'this_round_reply_guidance': FINAL_DONE}
 
 
 def observed(context):
@@ -484,6 +512,8 @@ workflow = Workflow(
     State('manual_approve', 'Approve integration?',
           precheck=observed, owner=outer_owner),
     State('integration_error', INTEGRATION_PROMPT, precheck=observed, view=integration_view, owner=owner('reviewer'), preview='Reviewer: diagnose integration failure and select recovery or rework.'),
+    State('conflict_decide', 'Choose upstream, incoming or custom resolution.', precheck=observed,
+          owner=outer_owner, view=conflict_view, preview='MAIN: decide unresolved upstream versus incoming feature intent.'),
     State('done', 'Feature commit already pushed to the parent branch. Use amend to revise that pushed feature.',
           precheck=observed, view=done_view, owner=owner('developer'), preview='Feature pushed. Amend only on an explicit outer request.'),
     State('amending', 'Developer: minimal inline replacements within the delivered feature only; reject another feature. '
@@ -501,6 +531,12 @@ workflow = Workflow(
     Option('final_approve', prompt='approve', action=merge_approved),
     Option('environment_repaired', prompt='Reviewer recovery completed: retry publication with required checks.', action=recover,
            params=(Parameter('--main-subject', 'Semantic subject for pending main product changes', required=False),)),
+    Option('report_conflict', prompt='Cannot determine newer intent: ask MAIN.', action=report_conflict,
+           params=(Parameter('--comparison', 'Minimal visual comparing actual upstream/incoming features and conflicted files'),)),
+    Option('use_upstream', prompt='Keep upstream', action=choose_conflict),
+    Option('use_incoming', prompt='Keep incoming', action=choose_conflict),
+    Option('custom_resolution', prompt='Custom resolution', action=choose_conflict,
+           params=(Parameter('--steer', 'Resolution instructions for Reviewer'),)),
     Option('amend', prompt='Explicit outer request: recreate the delivered feature checkout and reopen the issue.', action=amend),
     Option('push', prompt='Publish the amended commit, clean up and mark the native issue done.', action=push),
     Branch('approval', 'manual config?',
@@ -516,6 +552,9 @@ workflow = Workflow(
         ('final_approve', 'merge_result'),
         ('merge_result', 'integration_error'), ('merge_result', 'done'), ('merge_result', 'review'),
         ('integration_error', 'environment_repaired'), ('integration_error', 'rework'),
+        ('integration_error', 'report_conflict'), ('report_conflict', 'conflict_decide'),
+        ('conflict_decide', 'use_upstream'), ('conflict_decide', 'use_incoming'), ('conflict_decide', 'custom_resolution'),
+        ('use_upstream', 'integration_error'), ('use_incoming', 'integration_error'), ('custom_resolution', 'integration_error'),
         ('environment_repaired', 'merge_result'),
         ('rework', 'develop'), ('cancel', Workflow.FINISHED),
         ('done', 'amend'), ('amend', 'amending'),
