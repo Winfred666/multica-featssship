@@ -138,14 +138,15 @@ class WorkflowFixture(unittest.TestCase):
         main = db['issues'][self.ids['installer']]
         thread, child_id = str(uuid.uuid4()), str(uuid.uuid4())
         reference = {'issue_id': main['id'], 'filename': 'batch.json'}
-        batch = {'issues': [{'name': 'callback', 'request': 'Ship callback fix.'}],
+        batch = {'issues': [{'name': 'callback', 'request': 'Ship callback fix.'},
+                            {'name': 'retry', 'request': 'Ship retry fix.'}],
                  'source': config_ref(main), 'main_issue_id': main['id'], 'dispatch_thread': thread}
         row = {'id': str(uuid.uuid4()), 'filename': reference['filename'], 'data': json.dumps(batch)}
         db['attachments'][row['id']] = row
         main['attachments'].append(row)
         main['metadata'][DELEGATION_KEY] = json.dumps(reference)
         main['metadata'][DISPATCH_KEY] = json.dumps({'thread': thread, 'draft_attachment_id': row['id'],
-                                                   'items': [{'issue_id': child_id}]})
+                                                   'items': [{'issue_id': child_id}, {}]})
         task = self.base / 'main-task'
         task.mkdir()
         main['metadata']['sop.' + name] = json.dumps({'status': 'outer_decide', 'workdir': str(task)})
@@ -153,6 +154,12 @@ class WorkflowFixture(unittest.TestCase):
         self.db_path.write_text(json.dumps(db))
         env = {**self.env, 'MULTICA_ISSUE_ID': main['id'], 'MULTICA_AGENT_ID': self.ids['main'],
                'MULTICA_WORKSPACE_ID': self.ids['workspace'], 'MULTICA_SOP_SKILL_ROOTS': str(skills)}
+        self.call('git', 'branch', 'feat/messages/retry')
+        result = self.call(MULTICA, 'sop', 'run', name, 'confirm', cwd=task, env=env, ok=False)
+        self.assertIn('already claimed', result.stdout, result.stderr)
+        first_child = self.db()['issues'][child_id]
+        self.assertEqual(first_child['status'], 'todo')
+        self.call('git', 'branch', '-m', 'feat/messages/retry', 'fixture-claimed')
         result = self.call(MULTICA, 'sop', 'run', name, 'confirm', cwd=task, env=env)
         self.assertEqual(json.loads(result.stdout)['status'], 'FINISHED')
         child = self.db()['issues'][child_id]
@@ -166,12 +173,20 @@ class WorkflowFixture(unittest.TestCase):
         self.assertNotIn('sop.' + name, metadata)
         self.assertEqual(config_ref(child, DELEGATION_KEY), {**reference, 'index': 0})
         self.assertEqual(self.document(child, DELEGATION_KEY), batch)
-        self.assertFalse(any(call[:2] == ['issue', 'create'] for call in self.db()['calls']))
+        self.assertEqual(sum(call[:2] == ['issue', 'create'] for call in self.db()['calls']), 1)
 
+        db = self.db()
+        db['issues'][main['id']]['metadata'][DISPATCH_KEY] = json.dumps(
+            {'thread': thread, 'draft_attachment_id': row['id'], 'items': [{'issue_id': child_id, 'dispatched': True}]})
+        self.db_path.write_text(json.dumps(db))
+        metadata = db['issues'][main['id']]['metadata']
         help_text = self.call(MULTICA, 'sop', 'run', name, '--help', cwd=task, env=env).stdout
         self.assertEqual(help_text.strip(), (skills / name / 'SKILL.md').read_text().split('---', 2)[2].strip())
         self.assertEqual(self.db()['issues'][main['id']]['metadata'], metadata)
         new_thread = str(uuid.uuid4())
+        failed = self.call(MULTICA, 'sop', 'run', name, '--thread', new_thread, '--config', '{}', cwd=task, env=env, ok=False)
+        self.assertIn('error', json.loads(failed.stdout))
+        self.assertNotIn('sop.' + name, self.db()['issues'][main['id']]['metadata'])
         result = self.call(MULTICA, 'sop', 'run', name, '--thread', new_thread, cwd=task, env=env)
         self.assertEqual(json.loads(result.stdout)['status'], 'edit')
         state = json.loads(self.db()['issues'][main['id']]['metadata']['sop.' + name])

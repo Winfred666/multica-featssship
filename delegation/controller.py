@@ -55,8 +55,8 @@ def configured(context):
                    record=json.loads(main.get('metadata', {}).get(DISPATCH_KEY, '{}')))
     state = context['state']
     context['installed'] = read_config(source)
-    if args.thread:
-        state['reply_parent'] = args.thread
+    if not state.get('status'):
+        context['record'] = {}
     if (args.config is not None or not context['record']) and not state.get('draft'):
         if context['record']:
             raise ValueError('Use refresh to edit the current batch.')
@@ -69,6 +69,8 @@ def configured(context):
         path.write_text(json.dumps(batch_config(batch, context), indent=2) + '\n')
         state['draft'] = {'thread': args.thread, 'reference': context['reference'], 'path': str(path)}
         args.config, context['argv'] = None, []
+    if args.thread:
+        state['reply_parent'] = args.thread
     if draft := state.get('draft'):
         context.update(record={'thread': draft['thread']}, reference=draft['reference'])
         path = Path(draft['path'])
@@ -146,13 +148,9 @@ def dispatch(args, context):
 
 
 def dispatch_item(context, request, record, index):
-    if record.get('dispatched'):
-        return
     if record.get('issue_id'):
         child = cli('issue', 'get', record['issue_id'])
         if config_ref(child, DELEGATION_KEY) and child['status'] != 'backlog':
-            record['dispatched'] = True
-            save_progress(context)
             return
     branch = request['branch']
     title = request.get('title') or request['name']
@@ -210,8 +208,6 @@ def dispatch_item(context, request, record, index):
     cli('issue', 'update', child['id'], '--description-stdin', '--no-start', input=description)
     if child['status'] == 'backlog':
         cli('issue', 'status', child['id'], 'todo')
-    record['dispatched'] = True
-    save_progress(context)
 
 
 workflow = Workflow(
