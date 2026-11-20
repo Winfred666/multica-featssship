@@ -31,7 +31,8 @@ def owner(role):
 def outer_owner(context):
     binding = context['binding']
     return {'issue_id': binding['main_issue_id'], 'thread': binding['dispatch_thread'],
-            'id': None, 'content': ('Resolve upstream versus incoming feature intent.' if context['phase'] == 'conflict_decide'
+            'id': None, 'content': ('/note sub-issue DONE' if context['phase'] == 'done' else
+                                  'Resolve upstream versus incoming feature intent.' if context['phase'] == 'conflict_decide'
                                   else 'Review passed. Approve integration or return corrections to Developer.')}
 
 
@@ -175,9 +176,10 @@ def submit(args, context):
     ```"""
     repo, binding, state = shared_repo(context), context['binding'], context['state']
     feature = git(repo, 'rev-parse', 'HEAD')
+    state['changes'] = json.loads(args.changes)
     state.setdefault('submitted', state.get('commit', context['issue']['metadata'].get('git_base_commit', '')))
     state.pop('integrated', None)
-    state.update(commit=feature, feature=feature_link(repo, binding, feature), diff=diff_report(repo, binding),
+    state.update(commit=feature, feature=feature_link(repo, binding, feature), diff=diff_report(repo, binding, changes=state['changes']),
                  submission={'main_subject': args.main_subject})
     result = prepare_review(args, context)
     message = (args.summary + '\n\nVerified: `' + binding['test_command'] + '` passed.'
@@ -205,7 +207,7 @@ def prepare_review(args, context):
         state['commit'] = git(repo, 'rev-parse', 'HEAD')
         git(repo, 'rebase', 'origin/' + binding['parent_branch'])
         feature = git(repo, 'rev-parse', 'HEAD')
-        state.update(commit=feature, feature=feature_link(repo, binding, feature), diff=diff_report(repo, binding))
+        state.update(commit=feature, feature=feature_link(repo, binding, feature), diff=diff_report(repo, binding, changes=state['changes']))
         revisions = 'origin/' + binding['parent_branch'] + '..HEAD'
         if git(repo, 'rev-list', '--count', revisions) != '1' or git(repo, 'rev-list', '--merges', revisions):
             raise ValueError('Keep one feature commit; amend corrections. Do not create merge commits.')
@@ -232,7 +234,7 @@ def recover(args, context):
     return merge_approved(args, context)
 
 
-def diff_report(repo, binding, base=None):
+def diff_report(repo, binding, base=None, changes=None):
     base = base or git(repo, 'merge-base', 'origin/' + binding['parent_branch'], 'HEAD')
     rows = [line.split('\t', 2) for line in git(repo, 'diff', '--numstat', base, 'HEAD').splitlines()]
     sizes = [(int(added) if added != '-' else 0, int(deleted) if deleted != '-' else 0, path)
@@ -241,10 +243,12 @@ def diff_report(repo, binding, base=None):
     remote = binding['repository'].removesuffix('.git').replace('git@github.com:', 'https://github.com/').rstrip('/')
     head = git(repo, 'rev-parse', 'HEAD')
     totals += f' · [Full diff]({remote}/compare/{base}...{head})'
-    table = ['Largest file deltas (size only, not a complete feature explanation):',
-             '', '| File | Added / deleted |', '| --- | --- |']
-    table += [f'| `{path}` | +{added} / -{deleted} |'
-              for added, deleted, path in sorted(sizes, key=lambda row: row[0] + row[1], reverse=True)[:3]]
+    largest = sorted(sizes, key=lambda row: row[0] + row[1], reverse=True)[:3]
+    if not isinstance(changes, dict) or any(not isinstance(changes.get(path), str) or not changes[path].strip() for _, _, path in largest):
+        raise ValueError('Supply --changes as a JSON object mapping each of the three largest changed paths to its behavior explanation.')
+    table = ['| File | Added / deleted | Change |', '| --- | --- | --- |']
+    table += [f"| `{path}` | +{added} / -{deleted} | {changes[path].replace('|', chr(92) + '|').replace(chr(10), ' ')} |"
+              for added, deleted, path in largest]
     return totals + ('\n\n' + '\n'.join(table) if rows else '')
 
 
@@ -258,7 +262,7 @@ def final_note(context):
         issue = json.loads(run('gh', 'issue', 'view', source, '--json', 'state,title,url'))
         if issue['state'] == 'CLOSED':
             note += f" GitHub issue [{issue['title']}]({issue['url']}) solved and closed."
-    return note + '\n\n' + state['diff'] + ('\n\n' + state['main_restore_warning'] if state.get('main_restore_warning') else '')
+    return note + '\n\nVerified: `' + binding['test_command'] + '` passed.\n\n' + state['diff'] + ('\n\n' + state['main_restore_warning'] if state.get('main_restore_warning') else '')
 
 
 def verdict(args, context):
@@ -353,7 +357,7 @@ def merge_approved(args, context):
         shared_repo(context)
         verify_approved_revision(repo, binding, state['commit'])
         commit = git(repo, 'rev-parse', 'HEAD')
-        state.update(integrated=commit, feature=feature_link(repo, binding, commit), diff=diff_report(repo, binding))
+        state.update(integrated=commit, feature=feature_link(repo, binding, commit), diff=diff_report(repo, binding, changes=state['changes']))
         test(repo, binding['test_command'])
         warning = advance_parent(repo, binding, commit, approved=state['commit'])
         if warning:
@@ -415,7 +419,7 @@ def advance_parent(repo, binding, integrated, previous=None, approved=None):
 
 
 def done_view(context):
-    return {'instruction': f'Feature commit already pushed to {context["binding"]["parent_branch"]}. Use amend to revise that pushed feature.'}
+    return {'instruction': final_note(context) + '\n\nRequest rework only to revise this delivered feature.'}
 
 
 def amend(args, context):
@@ -424,10 +428,14 @@ def amend(args, context):
     common = Path(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'))
     checkout(context, common, context['state']['integrated'])
     cli('issue', 'status', context['issue_id'], 'in_progress')
+    wake_agent(context, context['binding']['developer_id'], 'Amend the delivered feature: ' + args.finding)
+    return {'this_round_reply_guidance': FINAL_DONE}
 
 
 def push(args, context):
     repo, binding, state = Path.cwd(), context['binding'], context['state']
+    if context['phase'] == 'amending':
+        state['changes'] = json.loads(args.changes)
     try:
         check_repo(repo, binding)
         if retained_rebase(repo):
@@ -435,7 +443,8 @@ def push(args, context):
         shared_repo(context)
         commit = git(repo, 'rev-parse', 'HEAD')
         if not state.get('amend_draft'):
-            state.update(amend_draft=commit, feature=feature_link(repo, binding, commit), diff=diff_report(repo, binding))
+            diff_report(repo, binding, state['integrated'], state['changes'])
+            state.update(amend_draft=commit, feature=feature_link(repo, binding, commit))
             base = state['integrated']
             # The amended feature is a sibling of the delivered commit. Create a
             # temporary delta commit so Git can replay only the correction.
@@ -465,7 +474,7 @@ def push(args, context):
                 git(repo, 'rebase', '--onto', upstream, base)
             commit = git(repo, 'rev-parse', 'HEAD')
             test(repo, binding['test_command'])
-            amendment_diff = diff_report(repo, binding, upstream)
+            amendment_diff = diff_report(repo, binding, upstream, state['changes'])
             try:
                 git(repo, 'push', '--force-with-lease=' + ref + ':' + remote, 'origin', commit + ':' + ref)
                 break
@@ -521,9 +530,8 @@ def finish(context, integrated=None, previous=None, parent=None, published=False
         state.pop('amend_draft', None)
         state.pop('amend_base', None)
     parent = context['binding']['main_issue_id']
-    receipt = comment(parent, note, binding['dispatch_thread'])
-    if not cancelled:
-        cli('issue', 'comment', 'resolve', receipt['id'])
+    if cancelled:
+        comment(parent, note, binding['dispatch_thread'])
     cli('issue', 'metadata', 'delete', context['issue_id'], '--key', 'git_base_commit')
     cli('issue', 'status', context['issue_id'], 'cancelled' if cancelled else 'done')
     return {'phase': Workflow.FINISHED if cancelled else 'done',
@@ -544,12 +552,13 @@ workflow = Workflow(
     State('conflict_decide', 'Choose upstream, incoming or custom resolution.', precheck=observed,
           owner=outer_owner, view=conflict_view, preview='MAIN: decide unresolved upstream versus incoming feature intent.'),
     State('done', 'Feature commit already pushed to the parent branch. Use amend to revise that pushed feature.',
-          precheck=observed, view=done_view, owner=owner('developer'), preview='Feature pushed. Amend only on an explicit outer request.'),
+          precheck=observed, view=done_view, owner=outer_owner, preview='Feature pushed. Request rework only for this feature.'),
     State('amending', 'Developer: minimal inline replacements within the delivered feature only; reject another feature. '
           'Verify, then push for automatic replay/publication preserving newer main commits. No fresh review or approval.',
           precheck=observed, owner=owner('developer')),
     Option('submit', prompt='Test and request independent review; push only if manual.', action=submit,
            params=(Parameter('--summary', 'Delivered behavior and evidence'),
+                   Parameter('--changes', 'JSON object: changed file paths to behavior explanations'),
                    Parameter('--main-subject', 'Meaningful semantic subject for pending main product changes', required=False))),
     Option('approve', prompt='Approve the revision; manual config waits for outer approval.', action=verdict,
            params=(Parameter('--finding', 'Review answers and evidence'),)),
@@ -566,8 +575,10 @@ workflow = Workflow(
     Option('use_incoming', prompt='Keep incoming', action=choose_conflict),
     Option('custom_resolution', prompt='Custom resolution', action=choose_conflict,
            params=(Parameter('--steer', 'Resolution instructions for Reviewer'),)),
-    Option('amend', prompt='Explicit outer request: recreate the delivered feature checkout and reopen the issue.', action=amend),
-    Option('push', prompt='Publish the amended commit, clean up and mark the native issue done.', action=push),
+    Option('amend', prompt='Request rework of the delivered feature.', action=amend,
+           params=(Parameter('--finding', 'Required corrections to the delivered feature'),)),
+    Option('push', prompt='Publish the amended commit, clean up and mark the native issue done.', action=push,
+           params=(Parameter('--changes', 'JSON object: changed file paths to behavior explanations'),)),
     Branch('approval', 'manual config?',
            select=lambda args, context: 'manual_approve' if context['binding']['manual'] else 'final_approve'),
     Branch('merge_result', 'Publication successful?'),

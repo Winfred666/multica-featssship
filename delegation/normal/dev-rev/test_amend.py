@@ -1,5 +1,7 @@
 """Exercise concurrent amendment publication with real Git repositories."""
 import ast
+import json
+from types import SimpleNamespace
 import os
 from pathlib import Path
 import subprocess
@@ -15,7 +17,7 @@ source = Path(__file__).with_name('controller.py').read_text()
 names = ('retained_rebase', 'parent_worktrees', 'advance_parent', 'push', 'recover',
          'diff_report', 'feature_link', 'final_note')
 functions = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name in names]
-sop = {'Path': Path, 'git': git, 'run': run, 'sys': sys}
+sop = {'Path': Path, 'git': git, 'run': run, 'sys': sys, 'json': json}
 exec(compile(ast.Module(body=functions, type_ignores=[]), 'controller.py', 'exec'), sop)
 
 
@@ -67,7 +69,7 @@ class AmendmentTest(unittest.TestCase):
                     old_cwd = Path.cwd()
                     try:
                         os.chdir(feature)
-                        result = sop['push'](None, context)
+                        result = sop['push'](SimpleNamespace(changes=json.dumps({'b': 'Updates the delivered value.'})), context)
                         if conflict:
                             self.assertEqual(result['phase'], 'integration_error')
                             self.assertIn('reviewer:', result['this_round_reply_guidance'])
@@ -86,7 +88,7 @@ class AmendmentTest(unittest.TestCase):
                     self.assertEqual(call(main, 'rev-parse', 'main'), commit)
                     self.assertIn('/commit/' + commit, result['note'])
                     self.assertIn('compare/' + call(main, 'rev-parse', 'origin/main^') + '...' + commit, result['note'])
-                    self.assertIn('| `b` | +1 / -1 |', result['note'])
+                    self.assertIn('| `b` | +1 / -1 | Updates the delivered value. |', result['note'])
                     if not conflict:
                         self.assertTrue(moved[0][1].startswith('--force-with-lease=refs/heads/main:'))
                         self.assertEqual(call(main, 'show', 'origin/main:newer'), 'newer work')

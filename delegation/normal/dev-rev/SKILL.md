@@ -12,8 +12,10 @@ From the prepared issue worktree on MAIN's selected branch, run
 Keep one feature commit; amend corrections without switching branches.
 Before submit, inspect pending main product changes and pass a meaningful
 `--main-subject`, usually `simplify(<scope>): <change>`, when main needs a commit.
-Submission commits product edits without private/local paths, pushes main including
-local commits, then rebases and checks the feature before review. Keep credentials
+For submit and amendment push, pass `--changes` as a JSON object mapping each of
+the three largest changed file paths to a short behavior explanation for the
+completion table. Submission commits product edits without private/local paths,
+pushes main including local commits, then rebases and checks the feature before review. Keep credentials
 and generated/local paths ignored; never put private data in product files.
 Reviewer recovers clean Git failures with `environment_repaired`. Human working
 edits on main are stashed while main advances, then restored. Restore conflicts
@@ -30,5 +32,5 @@ Follow the returned choices and reply guidance. Post any requested handoff,
 then end the turn without running the receiving role's callback.
 
 Initial delivery uses configured approval. Amend shipped work only on an explicit
-outer request: minimal inline replacements within that feature; reject another
-feature. Amendment and recovery need no fresh review or approval.
+outer request in the forwarded completion card: minimal inline replacements
+within that feature; reject another feature. Amendment and recovery need no fresh review or approval.
