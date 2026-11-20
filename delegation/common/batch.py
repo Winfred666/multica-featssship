@@ -36,7 +36,7 @@ def batch_config(batch, context):
 
 def publish(batch, context):
     config = batch_config(batch, context)
-    write_config(context['reference'], config, context['state']['reply_parent'])
+    write_config(context['reference'], config, context['record']['thread'])
     link_config(context['issue_id'], context['reference'], DELEGATION_KEY)
     context['record'] = {'thread': config['dispatch_thread'],
                          'draft_attachment_id': attachment(context['reference'])['id']}
@@ -57,23 +57,24 @@ def configured(context):
     if (args.config is not None or not context['record']) and not state.get('draft'):
         if context['record']:
             raise ValueError('Use refresh to edit the current batch.')
-        if not args.thread:
-            raise ValueError('Start with --thread <original MAIN request comment>.')
+        thread = args.thread or (context['native_comment_id'] if context['native_issue_id'] == context['issue_id'] else None)
+        if not thread:
+            raise ValueError('Start in the original MAIN request thread or pass --thread.')
         batch = json.loads(args.config) if args.config is not None else {'issues': [{}]}
-        context.update(record={'thread': args.thread}, reference={
+        context.update(record={'thread': thread}, reference={
             'issue_id': main['id'], 'filename': 'featssship.delegation-' + str(uuid.uuid4()) + '.json'})
         path = Path(tempfile.mkdtemp(prefix='featssship-delegation-')) / context['reference']['filename']
         path.write_text(json.dumps(batch_config(batch, context), indent=2) + '\n')
-        state['draft'] = {'thread': args.thread, 'reference': context['reference'], 'path': str(path)}
+        state['draft'] = {'thread': thread, 'reference': context['reference'], 'path': str(path)}
         args.config, context['argv'] = None, []
-    if args.thread:
-        state['reply_parent'] = args.thread
     if draft := state.get('draft'):
         context.update(record={'thread': draft['thread']}, reference=draft['reference'])
         path = Path(draft['path'])
     else:
         path = download_config(context['reference'], tempfile.mkdtemp(prefix='featssship-delegation-'))
         context['revision'] = attachment(context['reference'])['id']
+    if not args.thread and not (context['native_issue_id'] == context['issue_id'] and context['native_comment_id']):
+        args.thread = context['record']['thread']
     context.update(config=json.loads(path.read_text()), config_path=str(path))
 
 
@@ -84,7 +85,7 @@ def view(context):
 
 
 def outer_owner(context):
-    return {'issue_id': context['issue_id'], 'thread': context['state']['reply_parent'],
+    return {'issue_id': context['issue_id'], 'thread': context['record']['thread'],
             'id': None, 'content': '/note'}
 
 
@@ -97,7 +98,8 @@ def request_changes(args, context):
     if any(item.get('issue_id') for item in context['record'].get('items', [])):
         raise ValueError('Children exist; resume dispatch instead of editing this batch.')
     context['state']['change_request'] = args.change_request
-    wake_agent(context, context['main']['assignee_id'], 'Batch changes requested: ' + args.change_request)
+    wake_agent({**context, 'native_comment_id': context['record']['thread']},
+               context['main']['assignee_id'], 'Batch changes requested: ' + args.change_request)
 
 
 def refresh(args, context):

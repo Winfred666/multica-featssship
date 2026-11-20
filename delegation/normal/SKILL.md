@@ -9,7 +9,8 @@ Use per-item `manual: true` for outer approval or `false` for automatic integrat
 after review.
 
 From the target repository in MAIN DEV:, run
-`multica sop run multica-featssship --thread <request UUID>`.
+`multica sop run multica-featssship` in the request thread, or pass
+`--thread <request UUID>` when there is no triggering comment.
 Confirmation resolves Git from this installed bundle's target checkout, even
 when the callback's saved workdir is MAIN's task context. Retry partial dispatch
 with `confirm`; saved children are reused.
