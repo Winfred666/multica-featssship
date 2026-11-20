@@ -9,18 +9,12 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'installation'), str(ROOT / 'delegation/common'),
                 str(ROOT / 'delegation/split/devrev_split')]
-from router import roles
 from score import numeric_score, evaluate
 from packages import build
 
 
 class SplitContractTests(unittest.TestCase):
-    def test_default_router_and_score_contract(self):
-        self.assertEqual(roles({}), ('delegation', 'feature'))
-        self.assertEqual(roles({'develop_reviewer_split': False}), roles({}))
-        self.assertEqual(roles({'develop_reviewer_split': True}), ('split-delegation', 'split-feature'))
-        with self.assertRaises(ValueError):
-            roles({'develop_reviewer_split': 'false'})
+    def test_score_contract(self):
         self.assertEqual(numeric_score('{"score": 0}'), 0)
         for output in ('{"score":true}', '{"score":NaN}', '{"score":Infinity}',
                        '{"score":1,"hidden":"not public"}', '[]'):
@@ -37,11 +31,16 @@ class SplitContractTests(unittest.TestCase):
         self.assertNotIn('private path/inputs', str(result.exception))
         self.assertEqual(context['state'], {})
 
-    def test_fixed_project_context_is_only_in_split_bundle(self):
+    def test_rebuilt_installer_removes_old_routing_only(self):
         with tempfile.TemporaryDirectory() as directory:
-            normal = build('delegation', Path(directory) / 'normal')
-            split = build('split-delegation', Path(directory) / 'split')
-            self.assertFalse((normal / 'PROJECT.md').exists())
-            self.assertIn('ontology module dictionary', (split / 'PROJECT.md').read_text())
-            self.assertTrue(json.loads((normal / 'config.json').read_text())['DEBUG'])
-            self.assertTrue(json.loads((split / 'config.json').read_text())['DEBUG'])
+            target = Path(directory) / 'installer'
+            old = [target / 'delegation' / path for path in
+                   ('common/router.py', 'split/controller.py', 'split/SKILL.md')]
+            for path in old:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('obsolete')
+            kept = target / 'delegation' / 'common' / 'local-settings.json'
+            kept.write_text('{}')
+            build('installation', target)
+            self.assertTrue(all(not path.exists() for path in old))
+            self.assertTrue(kept.exists())

@@ -86,6 +86,9 @@ def request_config(batch, installed=None, *, index):
                   questions=selected.get('questions', []))
     result['developer_id'] = selected.get('developer_id', result['developer_id'])
     result.update(config)
+    result['type'] = selected.get('type', 'dev')
+    if result['type'] not in ('dev', 'exp'):
+        raise ValueError('Direction type must be dev or exp.')
     if selected and result.get('name'):
         result.setdefault('branch', feature_branch(selected, result['name']))
     return result

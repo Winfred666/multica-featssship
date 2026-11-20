@@ -4,11 +4,10 @@ Read README.md for usage and [docs/workflow.md](docs/workflow.md) for source
 layout and package builds. Keep procedure scripts in their owning SoP folder.
 Use the CLI-owned Symbolic-SoP engine. Keep this repository atomic; no submodules.
 
-Shipping rules below describe the default normal bundle. Opt-in split experiments
-use `delegation/split/`: MAIN -> Reviewer exp -> Developer exp. Reviewer alone
+Shipping rules below describe dev directions. Exp directions use
+`delegation/split/`: MAIN -> Reviewer exp -> Developer exp. Reviewer alone
 runs that SoP; Developer answers the addressed questionnaire. No experiment
-integration, merge or push-to-main. Keep the install-time router in
-`delegation/common/router.py` and both procedure implementations separate.
+integration, merge or push-to-main. Select the child procedure by direction type at dispatch.
 See [the enforced evaluation boundary](docs/workflow.md#private-evaluation-boundary)
 before using any hidden input. Shared config links are public, never secret storage.
 

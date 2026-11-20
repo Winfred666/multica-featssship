@@ -4,10 +4,10 @@
 
 ```text
 installation/                  Installer and shared config/CLI helpers
-delegation/common/             Install-time router, shared batch drafting and GitHub links
+delegation/common/             Shared dispatch, batch drafting and GitHub links
 delegation/normal/             Normal delegation controller and SKILL.md
   dev-rev/                     Unchanged shipping procedure/controller
-delegation/split/              Experiment delegation controller and SKILL.md
+delegation/split/              Experiment context
   devrev_split/                Reviewer-owned procedure and canonical score adapter
 ```
 
@@ -18,7 +18,7 @@ From `installation/`, use `packages.build('installation', destination)`,
 `.agents/skills/multica-featssship-installation/` using the [README commands](../README.md#installer-agent).
 [install.deploy](../installation/install.py) then installs MAIN/shipping bundles under `.agents/skills/`.
 Dispatch copies dev-rev into each child worktree; updates leave in-flight copies untouched.
-Split counterparts are `split-delegation` and `split-feature`; `delegation/common/router.py` selects the pair at installation/update.
+Installation deploys `split-feature` alongside `feature`; delegation selects the child workflow from each direction type.
 The CLI supplies the engine; each SKILL.md declares `metadata: {sop: symbolic}`.
 
 [DiscoverSOPs](https://github.com/Winfred666/multica-RSI/blob/396df1773ea3629146b3556fd87e4d2c85e868a7/server/internal/cli/sop.go#L43-L99)
@@ -180,7 +180,7 @@ exit guidance. See `multica sop dev docs` for completion modes.
 ## Split experiment flow
 
 ```text
-MAIN: split delegation (same native batch confirmation)
+MAIN: delegation (same native batch confirmation)
   -> Reviewer exp issue: ready -> prepare -> develop (addressed to Developer)
        -> Developer exp issue: build variant, attach/update image and answer candidate_ready
           (commit, summary, committed pipeline file, visual image attachment ID)
@@ -210,10 +210,7 @@ credential is published in those attachments, comments, candidate worktrees or
 SoP state. Public direction `test_command` must be `evaluate.py`; no shared
 shell command is executed for scoring. Existing normal test commands are unchanged.
 
-The fixed minimal split context is `delegation/split/PROJECT.md`. Installation
-injects it into its owned project-description block only for that selected bundle,
-without replacing unrelated project context. Experiment issue descriptions retain
-it too. It encourages an ontology module dictionary and a pipeline of connected
+The fixed minimal split context is `delegation/split/PROJECT.md`. Experiment issue descriptions include it without changing unrelated project context. It encourages an ontology module dictionary and a pipeline of connected
 modules; every Reviewer experiment names its variant using the delegated name.
 Developer commits its detailed local pipeline file and attaches an initial visual
 image at development start, then updates that image as the pipeline changes.
@@ -224,8 +221,7 @@ committed pipeline blob and an image attached or independently linked to the
 Developer issue, then notifies Reviewer. These checks prove artifacts exist, not
 that the work is relevant or complete; Reviewer must judge that. Reviewer sees the
 committed pipeline and visual before submitting. No module schema or framework
-is imposed. The installer question about develop_reviewer_split is optional
-edit-state guidance, not a prerequisite to publish or confirm.
+is imposed.
 
 ### Private evaluation boundary
 

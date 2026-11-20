@@ -9,7 +9,6 @@ Assign an installation issue in the target project with the target repository,
 directions and known role/runtime choices. Review the saved JSON in the native
 questionnaire: `confirm` installs; `request_edit` returns to drafting.
 Confirmation creates/reuses independent MAIN, sets up roles/local skills and subscribes CEO.
-The edit-state prompt may ask about `develop_reviewer_split` (default false); no extra gate is required.
 
 ### Installer agent
 
@@ -68,7 +67,7 @@ Set `directions[].developer_id` to an existing agent UUID in the installer confi
 
 ```json
 {"directions": [{
-  "name": "frontend", "developer_id": "DEVELOPER_UUID", "scope": "src/ui/",
+  "name": "frontend", "type": "dev", "developer_id": "DEVELOPER_UUID", "scope": "src/ui/",
   "questions": ["Does the UI match the requested behavior?"],
   "test_command": "git diff --check", "branch_prefix": "feat/frontend"
 }]}
@@ -84,10 +83,9 @@ metadata without publishing config. Use the latest draft and serialize edits.
 
 ### Split experiments
 
-Set installation `develop_reviewer_split: true` and confirm installation/update
-to select separate experiment bundles. The default `false` keeps the existing
-shipping workflow. Direction names, scopes and review questions still apply.
-For split directions, `test_command: "evaluate.py"` names the canonical private
+Set `directions[].type` to `exp` for experiments or `dev` for shipping (the default).
+Both types can share one installation and batch. Direction names, scopes and review
+questions still apply. For exp directions, `test_command: "evaluate.py"` names the canonical private
 score script rather than a public shell test.
 
 MAIN creates a Reviewer `exp` child. Reviewer prepares a Developer `exp` child

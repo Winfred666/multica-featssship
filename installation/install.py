@@ -2,13 +2,9 @@
 """README installer: edit one config, then install after human confirmation."""
 import re
 import shlex
-import sys
 
 from featssship import check_repo, cli, config_ref, exclude_local, feature_branch, link_config, repo_root
-from packages import DELEGATION, build, skill_name
-
-sys.path.insert(0, str(DELEGATION / 'common'))
-from router import roles
+from packages import build, skill_name
 
 START, END = '<!-- featssship:installation -->', '<!-- /featssship:installation -->'
 
@@ -22,15 +18,14 @@ def section(original, text):
 def defaults(issue):
     source = cli('agent', 'get', issue['assignee_id'])
     settings = {key: source.get(key, '') for key in ('runtime_id', 'model', 'thinking_level')}
-    return {'repository': '', 'parent_branch': 'main', 'manual': False, 'develop_reviewer_split': False,
+    return {'repository': '', 'parent_branch': 'main', 'manual': False,
             **{role: {'name': 'Featssship ' + label, **settings}
                for role, label in (('delegator', 'Delegator'), ('developer', 'Developer'), ('reviewer', 'Reviewer'))},
-            'directions': [{'name': 'main', 'scope': '.', 'questions': [],
+            'directions': [{'name': 'main', 'type': 'dev', 'scope': '.', 'questions': [],
                             'test_command': '', 'branch_prefix': 'feat/main'}]}
 
 
 def validate(config):
-    roles(config)
     if not isinstance(config.get('manual', False), bool):
         raise ValueError('manual must be true or false.')
     def required(data, key):
@@ -41,6 +36,8 @@ def validate(config):
         raise ValueError('Configure at least one direction.')
     names = set()
     for direction in config['directions']:
+        if direction.get('type', 'dev') not in ('dev', 'exp'):
+            raise ValueError('Direction type must be dev or exp.')
         for key in ('name', 'scope', 'test_command'):
             required(direction, key)
         if 'developer_id' in direction:
@@ -145,17 +142,14 @@ def deploy(config, issue, root, *, include_feature=True):
     exclude_local(repo)
     destination = repo / '.agents' / 'skills'
     name = 'multica-featssship-' + issue['project_id'][:8]
-    delegation_role, feature_role = roles(config)
-    bundle = build(delegation_role, destination / name, name=name)
+    build('delegation', destination / name, name=name)
     # Existing dev-rev entry paths may be pinned by in-flight issues.
-    feature_destination = destination / skill_name(feature_role)
-    if include_feature or not feature_destination.exists():
-        build(feature_role, feature_destination)
+    for feature_role in ('feature', 'split-feature'):
+        feature_destination = destination / skill_name(feature_role)
+        if include_feature or not feature_destination.exists():
+            build(feature_role, feature_destination)
     # Replace only this installer's context block, preserving project context.
     project_text = re.sub(re.escape(START) + r'.*?' + re.escape(END), '', project.get('description') or '', flags=re.S)
-    context_file = bundle / 'PROJECT.md'
-    if context_file.is_file():
-        project_text = section(project_text, context_file.read_text().strip())
     if project_text != (project.get('description') or ''):
         cli('project', 'update', project['id'], '--description', project_text)
     root_text = section(root.get('description'),

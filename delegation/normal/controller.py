@@ -5,6 +5,7 @@ import shutil
 from featssship import (DELEGATION_KEY, DISPATCH_KEY, check_repo, cli, config_ref, entry_command,
                        git, has_manual, link_config, request_config)
 from github_issue import issue_link
+from experiment import dispatch_experiment
 from batch import (configured, view, outer_owner, outer_view, refresh, request_changes,
                    save_progress, DRAFT_PROMPT, OUTER_PROMPT, REPLY_GUIDANCE)
 from sop import FINISHED, Option, Parameter, State, Workflow
@@ -30,7 +31,10 @@ def dispatch(args, context):
     failures = []
     for index, (request, item) in enumerate(zip(batch, progress)):
         try:
-            dispatch_item(context, request, item, index)
+            if request['type'] == 'exp':
+                dispatch_experiment(context, request, item, index)
+            else:
+                dispatch_item(context, request, item, index)
             item.pop('branch_base', None)
             item.pop('remote_reserved', None)
         except ValueError as error:

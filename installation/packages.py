@@ -8,7 +8,6 @@ ROOT = Path(__file__).resolve().parent
 DELEGATION = ROOT / 'delegation' if (ROOT / 'delegation').is_dir() else ROOT.parent / 'delegation'
 SOURCES = {'installation': ROOT, 'delegation': DELEGATION / 'normal',
            'feature': DELEGATION / 'normal/dev-rev',
-           'split-delegation': DELEGATION / 'split',
            'split-feature': DELEGATION / 'split/devrev_split'}
 ENGINE_FILES = ('wrapper.py', 'sop.py', 'monitor.py', 'common.py')
 
@@ -33,14 +32,18 @@ def build(role, destination, *, name=None):
         shutil.copyfile(source / 'PROJECT.md', destination / 'PROJECT.md')
     else:
         (destination / 'PROJECT.md').unlink(missing_ok=True)
-    if role in ('delegation', 'split-delegation'):
-        for filename in ('batch.py', 'github_issue.py'):
+    if role == 'delegation':
+        for filename in ('batch.py', 'github_issue.py', 'experiment.py'):
             shutil.copyfile(DELEGATION / 'common' / filename, destination / filename)
+        shutil.copyfile(DELEGATION / 'split' / 'PROJECT.md', destination / 'PROJECT.md')
     elif role == 'installation':
         for filename in ('install.py', 'packages.py'):
             shutil.copyfile(source / filename, destination / filename)
         shutil.copytree(DELEGATION, destination / 'delegation', dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns('__pycache__'))
+        # Remove superseded installation-wide routing from rebuilt bundles.
+        for old in ('common/router.py', 'split/controller.py', 'split/SKILL.md'):
+            (destination / 'delegation' / old).unlink(missing_ok=True)
         # Retire only the old installer-owned entrypoints after the layout move.
         for old in (destination / 'delegation', destination / 'delegation/dev-rev'):
             for filename in ('SKILL.md', 'controller.py', 'featssship.py', 'github_issue.py', 'config.json'):

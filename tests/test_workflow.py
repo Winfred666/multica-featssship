@@ -14,6 +14,8 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 MULTICA = shutil.which('multica')
 sys.path.insert(0, str(ROOT / 'installation'))
+from install import defaults
+from unittest.mock import patch
 from featssship import CONFIG_KEY, DELEGATION_KEY, DISPATCH_KEY, config_ref, feature_branch, request_config
 
 
@@ -28,6 +30,18 @@ class BranchNamingTests(unittest.TestCase):
         ):
             with self.subTest(item=item):
                 self.assertEqual(request_config({'issues': [item]}, installed, index=0)['developer_id'], developer)
+
+    def test_default_install_direction_explicitly_uses_dev(self):
+        with patch('install.cli', return_value={}):
+            self.assertEqual(defaults({'assignee_id': 'installer'})['directions'][0]['type'], 'dev')
+
+    def test_direction_type_selection(self):
+        installed = {'directions': [{'name': 'repair'}, {'name': 'trial', 'type': 'exp'}]}
+        for name, expected in [('repair', 'dev'), ('trial', 'exp')]:
+            self.assertEqual(request_config({'issues': [{'direction': name}]}, installed, index=0)['type'], expected)
+        installed['directions'][1]['type'] = 'other'
+        with self.assertRaisesRegex(ValueError, 'dev or exp'):
+            request_config({'issues': [{'direction': 'trial'}]}, installed, index=0)
 
     def test_configured_short_branch_names(self):
         for prefix in ('feat/frontend', 'fix/cli'):
@@ -180,8 +194,9 @@ class WorkflowFixture(unittest.TestCase):
     def test_split_questionnaire_uses_child_threads_and_direction_developer(self):
         config = self.read_answers()
         direction_developer = str(uuid.uuid4())
-        config['develop_reviewer_split'] = True
-        config['directions'][0].update(developer_id=direction_developer, test_command='evaluate.py')
+        config['directions'].append({'name': 'experiment', 'type': 'exp', 'scope': '.',
+                                     'questions': ['Is the variant valid?'], 'test_command': 'evaluate.py',
+                                     'developer_id': direction_developer})
         self.write_answers(config)
         db = self.db()
         db['agents'][direction_developer] = {'id': direction_developer, 'name': 'Direction Developer',
@@ -199,12 +214,19 @@ class WorkflowFixture(unittest.TestCase):
         env = {**self.env, 'MULTICA_ISSUE_ID': main['id'], 'MULTICA_AGENT_ID': main['assignee_id'],
                'MULTICA_WORKSPACE_ID': self.ids['workspace'], 'MULTICA_COMMENT_ID': thread}
         self.call(MULTICA, 'sop', 'run', name, '--thread', thread, '--config',
-                  json.dumps({'issues': [{'name': 'variant', 'request': 'Develop a variant.'}]}), env=env)
+                  json.dumps({'issues': [{'name': 'repair', 'request': 'Repair benchmark.', 'direction': 'message'},
+                                         {'name': 'variant', 'request': 'Develop a variant.', 'direction': 'experiment'}]}), env=env)
         state = json.loads(self.db()['issues'][main['id']]['metadata']['sop.' + name])
         self.call(MULTICA, 'sop', 'run', name, 'refresh', '--config-file', state['draft']['path'], env=env)
         self.call(MULTICA, 'sop', 'run', name, 'confirm', env=env)
         db = self.db()
-        review = next(row for row in db['issues'].values() if row.get('parent_issue_id') == main['id'])
+        children = [row for row in db['issues'].values() if row.get('parent_issue_id') == main['id']]
+        shipping = next(row for row in children if row['title'] == 'repair')
+        review = next(row for row in children if row['title'] == 'variant')
+        self.assertNotEqual(shipping['assignee_id'], reviewer_id)
+        self.assertIn('prepared feature worktree', shipping['description'])
+        self.assertEqual(review['assignee_id'], reviewer_id)
+        self.assertIn('No integration or push-to-main', review['description'])
         review_thread = next(row['id'] for row in db['comments'] if row['issue_id'] == review['id'])
         env.update(MULTICA_ISSUE_ID=review['id'], MULTICA_AGENT_ID=reviewer_id, MULTICA_COMMENT_ID='')
         skill = 'multica-featssship-devrev-split'
