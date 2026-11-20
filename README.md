@@ -80,3 +80,5 @@ existing directions, scopes and questions.
 
 Draft publication writes config revisions; confirmation checkpoints role IDs in
 metadata without publishing config. Use the latest draft and serialize edits.
+
+感谢 [LINUX DO](https://linux.do/) 社区的支持。
