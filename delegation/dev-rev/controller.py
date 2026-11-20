@@ -227,17 +227,18 @@ def prepare_review(args, context):
 def recover(args, context):
     if context['state'].get('submission'):
         return prepare_review(args, context)
+    if context['state'].get('amend_draft'):
+        return push(args, context)
     return merge_approved(args, context)
 
 
-def diff_report(repo, binding):
-    rows = [line.split('\t', 2) for line in git(repo, 'diff', '--numstat',
-            'origin/' + binding['parent_branch'] + '...HEAD').splitlines()]
+def diff_report(repo, binding, base=None):
+    base = base or git(repo, 'merge-base', 'origin/' + binding['parent_branch'], 'HEAD')
+    rows = [line.split('\t', 2) for line in git(repo, 'diff', '--numstat', base, 'HEAD').splitlines()]
     sizes = [(int(added) if added != '-' else 0, int(deleted) if deleted != '-' else 0, path)
              for added, deleted, path in rows]
     totals = f'+{sum(a for a, _, _ in sizes)} / -{sum(d for _, d, _ in sizes)} lines across {len(rows)} files'
     remote = binding['repository'].removesuffix('.git').replace('git@github.com:', 'https://github.com/').rstrip('/')
-    base = git(repo, 'merge-base', 'origin/' + binding['parent_branch'], 'HEAD')
     head = git(repo, 'rev-parse', 'HEAD')
     totals += f' · [Full diff]({remote}/compare/{base}...{head})'
     table = ['Largest file deltas (size only, not a complete feature explanation):',
@@ -435,34 +436,60 @@ def push(args, context):
         commit = git(repo, 'rev-parse', 'HEAD')
         if not state.get('amend_draft'):
             state.update(amend_draft=commit, feature=feature_link(repo, binding, commit), diff=diff_report(repo, binding))
-        base = state.get('amend_base', state['integrated'])
-        git(repo, 'fetch', 'origin', binding['parent_branch'])
-        remote = git(repo, 'rev-parse', 'origin/' + binding['parent_branch'])
-        parent = git(repo, 'rev-parse', binding['parent_branch'])
-        ancestor = git(repo, 'merge-base', parent, remote)
-        upstream = parent if ancestor == remote else remote
-        git(repo, 'merge-base', '--is-ancestor', parent, upstream)
-        git(repo, 'merge-base', '--is-ancestor', base, upstream)
-        if base != upstream:
-            # Replace the delivered feature, replaying newer commits without adding a feature commit.
-            git(repo, 'reset', '--keep', upstream)
-            state['amend_base'] = upstream
-            git(repo, 'rebase', '--onto', commit, base)
-        commit = git(repo, 'rev-parse', 'HEAD')
-        test(repo, binding['test_command'])
+            base = state['integrated']
+            # The amended feature is a sibling of the delivered commit. Create a
+            # temporary delta commit so Git can replay only the correction.
+            commit = git(repo, 'commit-tree', commit + '^{tree}', '-p', base,
+                         '-m', git(repo, 'log', '-1', '--format=%s', commit))
+            git(repo, 'reset', '--keep', commit)
+            state['amend_base'] = base
+        ref = 'refs/heads/' + binding['parent_branch']
+        while True:
+            base = state['amend_base']
+            git(repo, 'fetch', 'origin', binding['parent_branch'])
+            remote = git(repo, 'rev-parse', 'origin/' + binding['parent_branch'])
+            parent = git(repo, 'rev-parse', binding['parent_branch'])
+            try:
+                git(repo, 'merge-base', '--is-ancestor', parent, remote)
+                upstream = remote
+            except ValueError:
+                try:
+                    git(repo, 'merge-base', '--is-ancestor', remote, parent)
+                    upstream = parent
+                except ValueError:
+                    if parent != state['integrated']:
+                        raise ValueError('Local main and remote main diverged; preserve both for recovery.')
+                    upstream = remote
+            if base != upstream:
+                state['amend_base'] = upstream
+                git(repo, 'rebase', '--onto', upstream, base)
+            commit = git(repo, 'rev-parse', 'HEAD')
+            test(repo, binding['test_command'])
+            amendment_diff = diff_report(repo, binding, upstream)
+            try:
+                git(repo, 'push', '--force-with-lease=' + ref + ':' + remote, 'origin', commit + ':' + ref)
+                break
+            except ValueError:
+                git(repo, 'fetch', 'origin', binding['parent_branch'])
+                if git(repo, 'rev-parse', 'origin/' + binding['parent_branch']) == remote:
+                    raise
+        state.update(feature=feature_link(repo, binding, commit), diff=amendment_diff)
+        state.pop('integration_error', None)
         warning = advance_parent(repo, binding, commit, parent)
         if warning:
             state['main_restore_warning'] = warning
-        return finish(context, commit, remote, parent)
+        return finish(context, commit, published=True)
     except ValueError as error:
-        if repo.is_dir() and state.get('amend_draft') and not retained_rebase(repo):
-            git(repo, 'reset', '--keep', state.pop('amend_draft'))
-            state.pop('amend_base', None)
-        raise context['error']('amendment_failed', 'Automatic amendment failed: ' + str(error),
-                               'Draft/rebase preserved. Resolve the Git error and retry push; no fresh review or approval.') from error
+        if not state.get('amend_draft'):
+            raise
+        state['integration_error'] = 'Amendment publication stopped; preserve the draft and retained rebase: ' + str(error)
+        result = {'phase': 'integration_error'}
+        if context['phase'] == 'amending':
+            result['this_round_reply_guidance'] = handoff_guidance(context, 'reviewer', state['integration_error'])
+        return result
 
 
-def finish(context, integrated=None, previous=None, parent=None):
+def finish(context, integrated=None, previous=None, parent=None, published=False):
     """Reuse publication/cleanup for retained done; only cancellation finishes the SOP."""
     repo, binding, state = shared_repo(context), context['binding'], context['state']
     common = Path(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'))
@@ -479,7 +506,8 @@ def finish(context, integrated=None, previous=None, parent=None):
         try:
             ref = 'refs/heads/' + binding['parent_branch']
             lease = ['--force-with-lease=' + ref + ':' + previous] if amending else []
-            run('git', '--git-dir', str(common), 'push', *lease, 'origin', integrated + ':' + ref)
+            if not published:
+                run('git', '--git-dir', str(common), 'push', *lease, 'origin', integrated + ':' + ref)
         except ValueError as error:
             checkout(context, common, integrated)
             if amending:
@@ -489,7 +517,8 @@ def finish(context, integrated=None, previous=None, parent=None):
                 raise
             state['integration_error'] = 'Parent push failed; restored the local branch/worktree for Reviewer recovery. ' + str(error)
             return {'phase': 'integration_error'}
-        state['integrated'] = state.pop('amend_draft') if amending else integrated
+        state['integrated'] = integrated
+        state.pop('amend_draft', None)
         state.pop('amend_base', None)
     parent = context['binding']['main_issue_id']
     receipt = comment(parent, note, binding['dispatch_thread'])
@@ -558,6 +587,6 @@ workflow = Workflow(
         ('environment_repaired', 'merge_result'),
         ('rework', 'develop'), ('cancel', Workflow.FINISHED),
         ('done', 'amend'), ('amend', 'amending'),
-        ('amending', 'push'), ('push', 'done'),
+        ('amending', 'push'), ('push', 'merge_result'),
     ),
 )
