@@ -39,11 +39,8 @@ def outer_owner(context):
 
 def handoff_guidance(context, role, message):
     recipient, state = owner(role)(context), context['state']
-    explanation = ('After the delivery table, explain the feature’s entities, relationships and flow with one clean visual. '
-                   'Prefer inline HTML, then an artifact. Use minimal or no text; one short paragraph only if a visual cannot explain it. '
-                   'Do not add a rendering framework. '
-                   if role == 'reviewer' else
-                   'Fill only <brief explanation> from the actual feature context, not file sizes. ')
+    explanation = ('Fill <brief explanation> from the actual feature context. '
+                   if role == 'developer' else '')
     return ('Post the following handoff with `multica issue comment add ' + context['issue_id'] +
             ' --content-file <file>` in the current thread; do not put it only in the final response. '
             'Use the facts and links below without retrieving them again. ' + explanation +
