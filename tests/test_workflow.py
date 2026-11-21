@@ -387,5 +387,28 @@ class WorkflowFixture(unittest.TestCase):
         self.assertIn('Keep this footer.', self.db()['projects'][self.ids['project']]['description'])
 
 
+class CallbackRoutingTests(unittest.TestCase):
+    def test_same_issue_callback_keeps_native_thread_and_cross_issue_is_rejected(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from thread import post, reply_parent, wake_callback
+
+        context = {'issue_id': 'owner', 'native_issue_id': 'owner', 'native_comment_id': 'answer',
+                   'args': SimpleNamespace(thread=None), 'state': {}}
+        reply_parent(context)
+        self.assertEqual(context['state']['reply_parent'], 'answer')
+        with patch('thread.mention', return_value='@developer'), patch('thread.cli') as cli:
+            wake_callback(context, 'developer', 'Changes')
+            self.assertEqual(cli.call_args.args, ('issue', 'comment', 'add', 'owner', '--content-stdin',
+                                                  '--parent', 'answer', '--steer-active'))
+            post(context, 'Config', attachment='config.json')
+            self.assertEqual(cli.call_args.args, ('issue', 'comment', 'add', 'owner', '--content-stdin',
+                                                  '--parent', 'answer', '--attachment', 'config.json'))
+            context['native_issue_id'] = 'display'
+            with self.assertRaisesRegex(ValueError, 'owner issue.*display issue thread'):
+                wake_callback(context, 'developer', 'Changes')
+            self.assertEqual(cli.call_count, 2)
+
+
 if __name__ == '__main__':
     unittest.main()

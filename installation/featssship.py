@@ -42,22 +42,6 @@ def read_config(reference):
             key: value for key, value in reference.items() if key.startswith('installed_')}
 
 
-def write_config(reference, config, parent=None, message=' '):
-    # TODO: Replace immutable attachment revisions with native deliverable update.
-    # The stable owner/filename reference resolves the newest revision, across issues.
-    if not parent:
-        roots = cli('issue', 'comment', 'list', reference['issue_id'], '--roots-only', '--summary')
-        parent = roots[-1]['id'] if roots else None
-    with tempfile.TemporaryDirectory(prefix='.featssship-', dir=Path.cwd()) as directory:
-        path = Path(directory) / reference['filename']
-        path.write_text(json.dumps(config, indent=2) + '\n')
-        # The caller supplies change context; the engine publishes the questionnaire.
-        words = ['issue', 'comment', 'add', reference['issue_id'], '--content', message, '--attachment', str(path)]
-        if parent:
-            words += ['--parent', parent]
-        return cli(*words)
-
-
 def merge_patch(config, patch):
     """JSON merge patch: objects merge, arrays replace, null deletes a field."""
     result = dict(config)

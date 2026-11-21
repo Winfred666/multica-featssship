@@ -22,7 +22,7 @@ def build(role, destination, *, name=None):
     source = SOURCES[role]
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
-    for filename in ('config.json', 'featssship.py'):
+    for filename in ('config.json', 'featssship.py', 'thread.py'):
         if filename == 'config.json' and (destination / filename).exists():
             continue
         shutil.copyfile(ROOT / filename, destination / filename)

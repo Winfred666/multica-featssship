@@ -5,7 +5,8 @@ import json
 import re
 import sys
 
-from featssship import check_repo, clean, cli, comment, feature_config, git, run, test, wake_agent
+from featssship import check_repo, clean, cli, comment, feature_config, git, run, test
+from thread import check_callback_thread, wake_callback
 from sop import Branch, Completed, Option, Parameter, State, Workflow
 
 FINAL_DONE = 'directly and silently end this turn'
@@ -81,7 +82,7 @@ def choose_conflict(args, context):
                 'use_incoming': 'Keep the incoming feature in the reported conflict.',
                 'custom_resolution': getattr(args, 'steer', '')}[args.event]
     context['state']['conflict_decision'] = 'Outer conflict decision: ' + decision
-    wake_agent(context, context['binding']['reviewer_id'],
+    wake_callback(context, context['binding']['reviewer_id'],
                decision + ' Resolve only the reported conflict, preserve Git state and run required checks. '
                'Do not treat this content decision as approval of unrelated edits or alter approval checkpoints. '
                'If the resolved revision needs fresh review, use the existing rework/submission path.')
@@ -282,12 +283,14 @@ def verdict(args, context):
         return {'this_round_reply_guidance': 'Briefly explain the reviewed changes. '
                 'The human approval questionnaire goes to MAIN’s dispatch thread; end this turn.'}
     if args.event == 'rework':
+        if context['phase'] == 'manual_approve':
+            check_callback_thread(context)
         if context['phase'] == 'integration_error':
             state.pop('integration_error', None)
             state.pop('submission', None)
         cli('issue', 'status', context['issue_id'], 'in_progress')
         if context['phase'] == 'manual_approve':
-            wake_agent(context, binding['developer_id'], 'Corrections requested: ' + args.finding)
+            wake_callback(context, binding['developer_id'], 'Corrections requested: ' + args.finding)
             return {'this_round_reply_guidance': FINAL_DONE}
         return {'this_round_reply_guidance': handoff_guidance(context, 'developer', args.finding)}
     return {}
@@ -423,12 +426,13 @@ def done_view(context):
 
 
 def amend(args, context):
+    check_callback_thread(context)
     repo = Path.cwd()
     check_repo(repo, context['binding'])
     common = Path(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'))
     checkout(context, common, context['state']['integrated'])
     cli('issue', 'status', context['issue_id'], 'in_progress')
-    wake_agent(context, context['binding']['developer_id'], 'Amend the delivered feature: ' + args.finding)
+    wake_callback(context, context['binding']['developer_id'], 'Amend the delivered feature: ' + args.finding)
     return {'this_round_reply_guidance': FINAL_DONE}
 
 

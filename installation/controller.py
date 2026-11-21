@@ -1,7 +1,8 @@
 """Draft configuration, collect native outer confirmation and retain installation."""
 import json
 
-from featssship import cli, config_ref, link_config, merge_patch, read_config, wake_agent, write_config
+from featssship import cli, config_ref, link_config, merge_patch, read_config
+from thread import reply_parent, wake_callback, write_config
 from sop import Option, Parameter, State, Workflow
 
 CACHE_VIEW = False
@@ -31,12 +32,10 @@ def observed(context):
     if not reference:
         reference = {'issue_id': issue['id'], 'filename': 'featssship-config.json'}
         if not any(row['filename'] == reference['filename'] for row in issue.get('attachments', [])):
-            write_config(reference, defaults(issue), context['args'].thread)
+            write_config(context, reference, defaults(issue))
         link_config(issue['id'], reference)
         issue['metadata']['featssship.config'] = reference
     context.update(config=read_config(reference), reference=reference, issue=issue)
-    if context['args'].thread:
-        context['state']['reply_parent'] = context['args'].thread
 
 
 def view(context):
@@ -45,7 +44,7 @@ def view(context):
 
 
 def outer_owner(context):
-    return {'issue_id': context['issue_id'], 'thread': context['state'].get('reply_parent'),
+    return {'issue_id': context['issue_id'], 'thread': reply_parent(context),
             'id': None, 'content': '/note'}
 
 
@@ -56,14 +55,14 @@ def publish(args, context):
     if any(key.startswith('installed_') or key.endswith('_id') for key in patch):
         raise context['error']('invalid_input', 'Use role.id to select an agent; installed_* IDs are maintained by installation.')
     config = merge_patch(context['config'], patch)
-    write_config(context['reference'], config, args.thread or context['state'].get('reply_parent'),
+    write_config(context, context['reference'], config,
                  context['state'].get('change_request', 'Initial configuration.'))
     return {'this_round_reply_guidance': 'End this turn silently.'}
 
 
 def request_edit(args, context):
     context['state']['change_request'] = args.change_request
-    wake_agent(context, context['issue']['assignee_id'], 'Configuration changes requested: ' + args.change_request)
+    wake_callback(context, context['issue']['assignee_id'], 'Configuration changes requested: ' + args.change_request)
 
 
 def confirm(args, context):

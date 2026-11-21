@@ -4,7 +4,9 @@ from pathlib import Path
 import uuid
 import tempfile
 
-from featssship import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, config_ref, delegation_config, download_config, entry_command, git, has_manual, link_config, read_config, request_config, wake_agent, write_config
+from featssship import DELEGATION_KEY, DISPATCH_KEY, attachment, check_repo, cli, config_ref, delegation_config, download_config, entry_command, git, has_manual, link_config, read_config, request_config
+
+from thread import reply_parent, wake_callback, write_config
 
 SOP_DISPLAY_NAME = 'multica-featssship-delegation'
 
@@ -36,7 +38,7 @@ def batch_config(batch, context):
 
 def publish(batch, context):
     config = batch_config(batch, context)
-    write_config(context['reference'], config, context['state']['reply_parent'])
+    write_config(context, context['reference'], config)
     link_config(context['issue_id'], context['reference'], DELEGATION_KEY)
     context['record'] = {'thread': config['dispatch_thread'],
                          'draft_attachment_id': attachment(context['reference'])['id']}
@@ -66,8 +68,6 @@ def configured(context):
         path.write_text(json.dumps(batch_config(batch, context), indent=2) + '\n')
         state['draft'] = {'thread': args.thread, 'reference': context['reference'], 'path': str(path)}
         args.config, context['argv'] = None, []
-    if args.thread:
-        state['reply_parent'] = args.thread
     if draft := state.get('draft'):
         context.update(record={'thread': draft['thread']}, reference=draft['reference'])
         path = Path(draft['path'])
@@ -84,7 +84,7 @@ def view(context):
 
 
 def outer_owner(context):
-    return {'issue_id': context['issue_id'], 'thread': context['state']['reply_parent'],
+    return {'issue_id': context['issue_id'], 'thread': reply_parent(context),
             'id': None, 'content': '/note'}
 
 
@@ -97,7 +97,7 @@ def request_changes(args, context):
     if any(item.get('issue_id') for item in context['record'].get('items', [])):
         raise ValueError('Children exist; resume dispatch instead of editing this batch.')
     context['state']['change_request'] = args.change_request
-    wake_agent(context, context['main']['assignee_id'], 'Batch changes requested: ' + args.change_request)
+    wake_callback(context, context['main']['assignee_id'], 'Batch changes requested: ' + args.change_request)
 
 
 def refresh(args, context):
