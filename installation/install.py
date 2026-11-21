@@ -57,9 +57,9 @@ def validate(config):
             if not isinstance(config[role].get('model'), str):
                 raise ValueError(role + '.model must be a string; blank inherits the runtime default.')
     ids = [config.get('installed_' + role + '_id') or config.get(role, {}).get('id') for role in ('delegator', 'developer', 'reviewer')]
-    selected = [identity for identity in ids if identity]
-    if len(set(selected)) != len(selected):
-        raise ValueError('Select distinct MAIN, Developer and Reviewer agents.')
+    main, developer, reviewer = ids
+    if reviewer and reviewer in (main, developer):
+        raise ValueError('Select distinct MAIN and Reviewer agents, and distinct Developer and Reviewer agents.')
 
 
 def agent(config, role, issue):
@@ -115,8 +115,8 @@ def execute(config, issue, state, save_state):
     root = main_root(config, issue, state, save_state)
     developer = agent(config, 'developer', issue)
     reviewer = agent(config, 'reviewer', issue)
-    if developer == reviewer or root['assignee_id'] in (developer, reviewer):
-        raise ValueError('Select distinct MAIN, Developer and Reviewer agents so MAIN only dispatches and receives.')
+    if reviewer in (developer, root['assignee_id']):
+        raise ValueError('Select distinct MAIN and Reviewer agents, and distinct Developer and Reviewer agents.')
     command = deploy(config, issue, root)
     return {'root_issue_id': root['id'], 'developer_id': developer, 'reviewer_id': reviewer,
             'command': command, 'inputs': '--thread REQUEST_UUID --config <batch-issues-JSON>'}

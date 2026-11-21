@@ -8,7 +8,8 @@ Requires Python 3.11+, Git and authenticated `multica` with `sop run` support.
 Assign an installation issue in the target project with the target repository,
 directions and known role/runtime choices. Review the saved JSON in the native
 questionnaire: `confirm` installs; `request_edit` returns to drafting.
-Confirmation creates/reuses independent MAIN, sets up roles/local skills and subscribes CEO.
+Confirmation creates/reuses the MAIN issue, sets up roles/local skills and subscribes CEO.
+MAIN and Developer may reuse the same agent; Reviewer must be distinct from both.
 
 ### Installer agent
 
