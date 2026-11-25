@@ -388,7 +388,7 @@ class WorkflowFixture(unittest.TestCase):
 
 
 class CallbackRoutingTests(unittest.TestCase):
-    def test_same_issue_callback_keeps_native_thread_and_cross_issue_is_rejected(self):
+    def test_callback_uses_saved_owner_thread_not_display_thread(self):
         from types import SimpleNamespace
         from unittest.mock import patch
         from thread import post, reply_parent, wake_callback
@@ -400,14 +400,19 @@ class CallbackRoutingTests(unittest.TestCase):
         with patch('thread.mention', return_value='@developer'), patch('thread.cli') as cli:
             wake_callback(context, 'developer', 'Changes')
             self.assertEqual(cli.call_args.args, ('issue', 'comment', 'add', 'owner', '--content-stdin',
-                                                  '--parent', 'answer', '--steer-active'))
+                                                  '--parent', 'answer'))
             post(context, 'Config', attachment='config.json')
             self.assertEqual(cli.call_args.args, ('issue', 'comment', 'add', 'owner', '--content-stdin',
                                                   '--parent', 'answer', '--attachment', 'config.json'))
-            context['native_issue_id'] = 'display'
-            with self.assertRaisesRegex(ValueError, 'owner issue.*display issue thread'):
+            context.update(native_issue_id='display', native_comment_id='display-answer',
+                           args=SimpleNamespace(thread='display-thread'))
+            wake_callback(context, 'reviewer', 'Recover')
+            self.assertEqual(cli.call_args.args, ('issue', 'comment', 'add', 'owner', '--content-stdin',
+                                                  '--parent', 'answer'))
+            context['state'].clear()
+            with self.assertRaisesRegex(ValueError, 'No saved reply thread'):
                 wake_callback(context, 'developer', 'Changes')
-            self.assertEqual(cli.call_count, 2)
+            self.assertEqual(cli.call_count, 3)
 
 
 if __name__ == '__main__':

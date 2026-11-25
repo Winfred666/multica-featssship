@@ -6,7 +6,7 @@ import re
 import sys
 
 from featssship import check_repo, clean, cli, comment, feature_config, git, run, test
-from thread import check_callback_thread, wake_callback
+from thread import post, reply_parent, wake_callback
 from sop import Branch, Completed, Option, Parameter, State, Workflow
 
 FINAL_DONE = 'directly and silently end this turn'
@@ -42,7 +42,7 @@ def handoff_guidance(context, role, message):
     explanation = ('Fill <brief explanation> from the actual feature context. '
                    if role == 'developer' else '')
     return ('Post the following handoff with `multica issue comment add ' + context['issue_id'] +
-            ' --content-file <file>` in the current thread; do not put it only in the final response. '
+            ' --parent ' + reply_parent(context) + ' --content-file <file>`; do not put it only in the final response. '
             'Use the facts and links below without retrieving them again. ' + explanation +
             'Then directly and silently end this turn; do not run the receiving role’s callback.\n\n'
             f'[@{recipient["name"]}](mention://agent/{recipient["id"]}) {message}\n\n' +
@@ -62,6 +62,23 @@ def integration_view(context):
             '\n\n' + context['state'].get('conflict_decision', '')}
 
 
+def wake_recovery(context):
+    return {'phase': 'integration_error',
+            **handoff_on_save(context, 'reviewer', context['state']['integration_error'])}
+
+
+def handoff_on_save(context, role, message):
+    context['pending_handoff'] = (context['binding'][role + '_id'], message)
+    return {'this_round_reply_guidance': FINAL_DONE}
+
+
+def artifacts(context):
+    # The native publication hook runs after saving the destination guidance.
+    if handoff := context.get('pending_handoff'):
+        wake_callback(context, *handoff)
+    return {}
+
+
 def report_conflict(args, context):
     context['state']['conflict_comparison'] = args.comparison
     return {'this_round_reply_guidance': 'Explain upstream versus incoming with one minimal visual in the MAIN dispatch thread. '
@@ -79,11 +96,10 @@ def choose_conflict(args, context):
                 'use_incoming': 'Keep the incoming feature in the reported conflict.',
                 'custom_resolution': getattr(args, 'steer', '')}[args.event]
     context['state']['conflict_decision'] = 'Outer conflict decision: ' + decision
-    wake_callback(context, context['binding']['reviewer_id'],
-               decision + ' Resolve only the reported conflict, preserve Git state and run required checks. '
-               'Do not treat this content decision as approval of unrelated edits or alter approval checkpoints. '
-               'If the resolved revision needs fresh review, use the existing rework/submission path.')
-    return {'this_round_reply_guidance': FINAL_DONE}
+    return handoff_on_save(context, 'reviewer',
+                           decision + ' Resolve only the reported conflict, preserve Git state and run required checks. '
+                           'Do not treat this content decision as approval of unrelated edits or alter approval checkpoints. '
+                           'If the resolved revision needs fresh review, use the existing rework/submission path.')
 
 
 def observed(context):
@@ -91,6 +107,12 @@ def observed(context):
     context.update(issue=issue, binding=feature_config(issue))
     if issue['status'] == 'cancelled' or (issue['status'] == 'done' and context['phase'] not in ('done', 'amending')):
         raise Completed(FINAL_DONE, target=Workflow.FINISHED)
+    state = context['state']
+    # Native questionnaires also need the child thread, not the MAIN display thread.
+    context['args'].thread = (state.get('reply_parent') or
+                              state.get('questionnaire', {}).get('que_comment_id') or reply_parent(context))
+    if context['args'].thread:
+        state['reply_parent'] = context['args'].thread
 
 
 def enter_develop(context):
@@ -173,6 +195,8 @@ def submit(args, context):
         main -> prepare -> review; main -> recover [label="error"]; prepare -> recover [label="error"]; }
     ```"""
     repo, binding, state = shared_repo(context), context['binding'], context['state']
+    if not args.thread:
+        args.thread = state['reply_parent'] = post(context, '/note Feature review thread.')['id']
     feature = git(repo, 'rev-parse', 'HEAD')
     state['changes'] = json.loads(args.changes)
     state.setdefault('submitted', state.get('commit', context['issue']['metadata'].get('git_base_commit', '')))
@@ -180,8 +204,9 @@ def submit(args, context):
     state.update(commit=feature, feature=feature_link(repo, binding, feature), diff=diff_report(repo, binding, changes=state['changes']),
                  submission={'main_subject': args.main_subject})
     result = prepare_review(args, context)
-    message = (args.summary + '\n\nVerified: `' + binding['test_command'] + '` passed.'
-               if result['phase'] == 'review' else state['integration_error'])
+    if result['phase'] == 'integration_error':
+        return wake_recovery(context)
+    message = args.summary + '\n\nVerified: `' + binding['test_command'] + '` passed.'
     result['this_round_reply_guidance'] = handoff_guidance(context, 'reviewer', message)
     return result
 
@@ -280,15 +305,12 @@ def verdict(args, context):
         return {'this_round_reply_guidance': 'Briefly explain the reviewed changes. '
                 'The human approval questionnaire goes to MAIN’s dispatch thread; end this turn.'}
     if args.event == 'rework':
-        if context['phase'] == 'manual_approve':
-            check_callback_thread(context)
         if context['phase'] == 'integration_error':
             state.pop('integration_error', None)
             state.pop('submission', None)
         cli('issue', 'status', context['issue_id'], 'in_progress')
         if context['phase'] == 'manual_approve':
-            wake_callback(context, binding['developer_id'], 'Corrections requested: ' + args.finding)
-            return {'this_round_reply_guidance': FINAL_DONE}
+            return handoff_on_save(context, 'developer', 'Corrections requested: ' + args.finding)
         return {'this_round_reply_guidance': handoff_guidance(context, 'developer', args.finding)}
     return {}
 
@@ -327,7 +349,7 @@ def merge_approved(args, context):
     """```dot
     digraph merge_approved { node [shape=box]; check [label="Reviewer: verify approved HEAD"];
         rebase [label="Rebase feature onto latest main; continue retained rebase"];
-        finish [label="Test, advance main, clean up and push"];
+        finish [label="Test, advance main, push and clean up"];
         judge [label="Reviewer: quick-judge integration error"];
         check -> rebase -> finish;
         rebase -> judge [label="error"]; finish -> judge [label="error"]; }
@@ -367,6 +389,8 @@ def merge_approved(args, context):
     except ValueError as error:
         state['integration_error'] = 'Integration stopped: ' + str(error)
         result = {'phase': 'integration_error'}
+    if result['phase'] == 'integration_error' and context['phase'] == 'manual_approve':
+        return wake_recovery(context)
     return result
 
 
@@ -423,14 +447,12 @@ def done_view(context):
 
 
 def amend(args, context):
-    check_callback_thread(context)
     repo = Path.cwd()
     check_repo(repo, context['binding'])
     common = Path(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'))
     checkout(context, common, context['state']['integrated'])
     cli('issue', 'status', context['issue_id'], 'in_progress')
-    wake_callback(context, context['binding']['developer_id'], 'Amend the delivered feature: ' + args.finding)
-    return {'this_round_reply_guidance': FINAL_DONE}
+    return handoff_on_save(context, 'developer', 'Amend the delivered feature: ' + args.finding)
 
 
 def push(args, context):
@@ -493,40 +515,30 @@ def push(args, context):
         if not state.get('amend_draft'):
             raise
         state['integration_error'] = 'Amendment publication stopped; preserve the draft and retained rebase: ' + str(error)
-        result = {'phase': 'integration_error'}
         if context['phase'] == 'amending':
-            result['this_round_reply_guidance'] = handoff_guidance(context, 'reviewer', state['integration_error'])
-        return result
+            return wake_recovery(context)
+        return {'phase': 'integration_error'}
 
 
-def finish(context, integrated=None, previous=None, parent=None, published=False):
+def finish(context, integrated=None, published=False):
     """Reuse publication/cleanup for retained done; only cancellation finishes the SOP."""
     repo, binding, state = shared_repo(context), context['binding'], context['state']
     common = Path(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'))
     if repo.resolve() != (common / 'featsship' / context['issue_id']).resolve():
         raise ValueError('Finish from this issue’s prepared feature worktree.')
     cancelled = state.get('cancel_reason')
-    amending = context['phase'] == 'amending'
     integrated = integrated or state.get('integrated')
     note = final_note(context)
+    if not cancelled and not published:
+        try:
+            git(repo, 'push', 'origin', integrated + ':refs/heads/' + binding['parent_branch'])
+        except ValueError as error:
+            state['integration_error'] = 'Parent push failed; retained the feature worktree for Reviewer recovery. ' + str(error)
+            return {'phase': 'integration_error'}
     os.chdir(common)
     run('git', '--git-dir', str(common), 'worktree', 'remove', str(repo))
     run('git', '--git-dir', str(common), 'branch', '-D', binding['branch'])
     if not cancelled:
-        try:
-            ref = 'refs/heads/' + binding['parent_branch']
-            lease = ['--force-with-lease=' + ref + ':' + previous] if amending else []
-            if not published:
-                run('git', '--git-dir', str(common), 'push', *lease, 'origin', integrated + ':' + ref)
-        except ValueError as error:
-            checkout(context, common, integrated)
-            if amending:
-                advance_parent(Path.cwd(), binding, parent, integrated)
-                git(Path.cwd(), 'reset', '--keep', state.pop('amend_draft'))
-                state.pop('amend_base', None)
-                raise
-            state['integration_error'] = 'Parent push failed; restored the local branch/worktree for Reviewer recovery. ' + str(error)
-            return {'phase': 'integration_error'}
         state['integrated'] = integrated
         state.pop('amend_draft', None)
         state.pop('amend_base', None)
@@ -601,4 +613,5 @@ workflow = Workflow(
         ('done', 'amend'), ('amend', 'amending'),
         ('amending', 'push'), ('push', 'merge_result'),
     ),
+    params=(Parameter('--thread', 'Original child thread (optional)', required=False),),
 )

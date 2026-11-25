@@ -62,7 +62,7 @@ class AmendmentTest(unittest.TestCase):
                             call(other, 'push', 'origin', 'main')
                         return git(repo, *args)
                     sop.update(git=racing_git, check_repo=lambda *a: None, shared_repo=lambda c: Path.cwd(),
-                               test=lambda *a: None, handoff_guidance=lambda c, role, message: role + ': ' + message,
+                               test=lambda *a: None, wake_recovery=lambda c: {'phase': 'integration_error'},
                                finish=lambda c, commit, published: {'commit': commit, 'note': sop['final_note'](c)})
                     context = {'phase': 'amending', 'binding': {'parent_branch': 'main', 'test_command': 'true',
                                'repository': str(root / 'origin.git')}, 'state': {'integrated': base}}
@@ -72,7 +72,6 @@ class AmendmentTest(unittest.TestCase):
                         result = sop['push'](SimpleNamespace(changes=json.dumps({'b': 'Updates the delivered value.'})), context)
                         if conflict:
                             self.assertEqual(result['phase'], 'integration_error')
-                            self.assertIn('reviewer:', result['this_round_reply_guidance'])
                             self.assertIsNotNone(sop['retained_rebase'](feature))
                             edit(feature, 'b', 'resolved')
                             context['phase'] = 'integration_error'

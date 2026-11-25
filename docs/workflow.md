@@ -109,10 +109,11 @@ A manual config adds the manual label before the child starts. Review never
 creates a checkout or switches branches. Automated review approval passes through
 the manual-config diamond directly to the registered `final_approve` action; there
 is no automatic approval State.
-Manual approval addresses the engine questionnaire to the concrete delegator agent,
-using `main_issue_id` and `dispatch_thread` from the linked delegation JSON.
-Outer approval directly runs the same action; outer rework passes correction arguments
-straight to Developer through a native mention/steer handoff. The engine runs the action and the
+The feature saves its original child reply thread, creating one on first submission
+if needed. Native callbacks run in that thread; approval, conflict and completion
+cards display separately under MAIN's linked `dispatch_thread`.
+Outer approval directly runs the same action; outer rework mentions Developer in
+the saved child thread. The engine runs the action and the
 integration-result diamond until a State is reached. Integration checks the exact approved HEAD, rebases/tests,
 and fast-forwards local main in its clean existing worktree (or atomically advances
 its unoccupied ref). A clean rebase hash change alone retains approval and updates
@@ -121,12 +122,12 @@ diamond routes all unsuccessful outcomes, including conflicts and rejected pushe
 to Reviewer evaluation and recovery. `rework` selected by Reviewer or outer returns to develop
 for fresh submission, review and any required outer approval. Rebase conflicts retain
 the interrupted rebase; Reviewer chooses rework when Developer corrections are
-needed. Success continues directly through local feature cleanup, parent push and MAIN delivery, then retains `done`
+needed. Success continues directly through parent push, local feature cleanup and MAIN delivery, then retains `done`
 for an explicit outer-requested amendment without another review loop. Completion
 reply guidance only requests silent exit; later `done` guidance states the feature
 is already pushed and offers amendment.
-A rejected push restores the local feature branch/worktree before Reviewer
-evaluation. There is no reported state, final-state action or finish command.
+A rejected push leaves the local feature branch, worktree and bundle intact for
+Reviewer recovery. There is no reported state, final-state action or finish command.
 
 Cancellation is available in develop and review for scope, Git/version
 infrastructure or edit-budget blockers, and in manual_approve for outer
@@ -138,7 +139,7 @@ read-only for source; approved integration runs the scripted checks. Human accep
 State owners resolve native `{id, name}` in the wrapper for actor checks,
 handoffs and tiny HTML labels.
 
-Submission and rework return `this_round_reply_guidance`: the acting agent uses
+Successful submission and Reviewer rework return `this_round_reply_guidance`: the acting agent uses
 `multica-peer-mention-protocol` to post one direct handoff in the current issue
 thread, mentioning the receiving role, then ends the turn silently. The template
 supplies the exact mention, submitted commit, full-diff link and numeric deltas;
@@ -146,7 +147,10 @@ only a brief feature-wide explanation needs filling. Size-ranked files are label
 as numeric context, not a complete feature explanation. No peer auto-posting,
 steering or handcrafted special-comment publication remains. The engine
 keeps the destination's ordinary guidance, ownership and later callbacks intact;
-only this invocation's output is masked. Only outer edit/rework callbacks wake agents.
+only this invocation's output is masked. A Developer publication failure or failed
+outer approval saves Reviewer's recovery choices before posting a targeted mention
+in the child thread. If posting fails, the saved choices remain available. A Reviewer
+already running integration gets the recovery choices directly.
 The final review action entering addressed approval returns minimal
 reply guidance to explain the changes and end the turn. The engine publishes and
 forwards its ordinary questionnaire; no separate wait comment, comment-scanning
