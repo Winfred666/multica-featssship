@@ -73,7 +73,10 @@ def handoff_on_save(context, role, message):
 
 
 def artifacts(context):
-    # The native publication hook runs after saving the destination guidance.
+    # The native publication hook runs after forwarding the addressed questionnaire.
+    if ((thread := context.get('pending_delivery_thread'))
+            and context['state'].get('questionnaire', {}).get('forwarded_comment_id')):
+        cli('issue', 'comment', 'resolve', thread)
     if handoff := context.get('pending_handoff'):
         wake_callback(context, *handoff)
     return {}
@@ -528,7 +531,6 @@ def finish(context, integrated=None, published=False):
         raise ValueError('Finish from this issue’s prepared feature worktree.')
     cancelled = state.get('cancel_reason')
     integrated = integrated or state.get('integrated')
-    note = final_note(context)
     if not cancelled and not published:
         try:
             git(repo, 'push', 'origin', integrated + ':refs/heads/' + binding['parent_branch'])
@@ -542,11 +544,12 @@ def finish(context, integrated=None, published=False):
         state['integrated'] = integrated
         state.pop('amend_draft', None)
         state.pop('amend_base', None)
-    parent = context['binding']['main_issue_id']
     if cancelled:
-        comment(parent, note, binding['dispatch_thread'])
+        comment(binding['main_issue_id'], final_note(context), binding['dispatch_thread'])
     cli('issue', 'metadata', 'delete', context['issue_id'], '--key', 'git_base_commit')
     cli('issue', 'status', context['issue_id'], 'cancelled' if cancelled else 'done')
+    if not cancelled:
+        context['pending_delivery_thread'] = binding['dispatch_thread']
     return {'phase': Workflow.FINISHED if cancelled else 'done',
             'this_round_reply_guidance': FINAL_DONE}
 
