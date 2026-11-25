@@ -111,9 +111,10 @@ def observed(context):
     if issue['status'] == 'cancelled' or (issue['status'] == 'done' and context['phase'] not in ('done', 'amending')):
         raise Completed(FINAL_DONE, target=Workflow.FINISHED)
     state = context['state']
-    # Native questionnaires also need the child thread, not the MAIN display thread.
-    context['args'].thread = (state.get('reply_parent') or
-                              state.get('questionnaire', {}).get('que_comment_id') or reply_parent(context))
+    # Same-issue writes cover the native trigger; remote callbacks retain the child anchor.
+    context['args'].thread = ((context['native_comment_id'] or reply_parent(context))
+                              if context['native_issue_id'] == context['issue_id'] else
+                              (state.get('reply_parent') or state.get('questionnaire', {}).get('que_comment_id')))
     if context['args'].thread:
         state['reply_parent'] = context['args'].thread
 
