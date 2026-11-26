@@ -367,6 +367,7 @@ def merge_approved(args, context):
     commit = state.get('integrated', state['commit'])
     try:
         check_repo(repo, binding)
+        git(repo, 'fetch', 'origin', binding['parent_branch'])
         rebase = retained_rebase(repo)
         if rebase:
             if ((rebase / 'orig-head').read_text().strip() != commit or
@@ -381,10 +382,8 @@ def merge_approved(args, context):
             raise ValueError('The remote feature branch changed after submission.')
         if rebase:
             git(repo, 'rebase', '--continue')
-        else:
-            git(repo, 'fetch', 'origin', binding['parent_branch'])
-            upstream = git(repo, 'rev-parse', 'origin/' + binding['parent_branch'])
-            git(repo, 'rebase', upstream)
+        upstream = git(repo, 'rev-parse', 'origin/' + binding['parent_branch'])
+        git(repo, 'rebase', upstream)
         shared_repo(context)
         verify_approved_revision(repo, binding, state['commit'])
         commit = git(repo, 'rev-parse', 'HEAD')
