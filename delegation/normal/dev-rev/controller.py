@@ -247,6 +247,8 @@ def prepare_review(args, context):
         ref = 'refs/heads/' + binding['branch']
         if binding['manual']:
             lease = state.get('submitted', context['issue']['metadata'].get('git_base_commit', ''))
+            if not git(repo, 'ls-remote', 'origin', ref):
+                lease = ''
             git(repo, 'push', '--force-with-lease=' + ref + ':' + lease, 'origin', 'HEAD:' + ref)
         state['submitted'] = feature
         state.pop('integration_error', None)

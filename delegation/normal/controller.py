@@ -84,9 +84,12 @@ def dispatch_item(context, request, record, index):
         shutil.copytree(repo / skill, worktree / skill,
                         ignore=shutil.ignore_patterns('.state', '__pycache__', '.errors'))
     if request['manual'] and not record.get('remote_reserved'):
-        if git(repo, 'ls-remote', 'origin', ref):
+        remote = git(repo, 'ls-remote', 'origin', ref).split()
+        if remote and remote[0] != record['branch_base']:
             raise ValueError('Feature branch is already claimed: ' + branch)
-        git(repo, 'push', '--force-with-lease=' + ref + ':', 'origin', record['branch_base'] + ':' + ref)
+        # Reserving already-published main reruns target hooks against unrelated history.
+        if not remote:
+            git(repo, 'merge-base', '--is-ancestor', record['branch_base'], 'origin/' + parent_branch)
         record['remote_reserved'] = True
         save_progress(context)
     cli('issue', 'metadata', 'set', child['id'], '--key', 'git_base_commit',
