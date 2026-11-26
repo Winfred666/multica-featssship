@@ -87,9 +87,12 @@ def dispatch_item(context, request, record, index):
         remote = git(repo, 'ls-remote', 'origin', ref).split()
         if remote and remote[0] != record['branch_base']:
             raise ValueError('Feature branch is already claimed: ' + branch)
-        # Reserving already-published main reruns target hooks against unrelated history.
         if not remote:
-            git(repo, 'merge-base', '--is-ancestor', record['branch_base'], 'origin/' + parent_branch)
+            try:
+                git(repo, 'push', '--force-with-lease=' + ref + ':', 'origin', record['branch_base'] + ':' + ref)
+            except ValueError as error:
+                raise ValueError('Delegator: reconcile freshly fetched remote main and the target repository push policy, '
+                                 'then retry this saved dispatch. Preserve the child and worktree; do not bypass hooks. ' + str(error)) from error
         record['remote_reserved'] = True
         save_progress(context)
     cli('issue', 'metadata', 'set', child['id'], '--key', 'git_base_commit',

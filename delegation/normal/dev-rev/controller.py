@@ -544,6 +544,12 @@ def finish(context, integrated=None, published=False):
         except ValueError as error:
             state['integration_error'] = 'Parent push failed; retained the feature worktree for Reviewer recovery. ' + str(error)
             return {'phase': 'integration_error'}
+    if not cancelled and binding['manual']:
+        ref = 'refs/heads/' + binding['branch']
+        remote = git(repo, 'ls-remote', 'origin', ref).split()
+        if remote:
+            submitted = state.get('submitted', state['commit'])
+            git(repo, 'push', '--force-with-lease=' + ref + ':' + submitted, 'origin', ':' + ref)
     os.chdir(common)
     run('git', '--git-dir', str(common), 'worktree', 'remove', str(repo))
     run('git', '--git-dir', str(common), 'branch', '-D', binding['branch'])
