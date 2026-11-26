@@ -199,13 +199,18 @@ def submit(args, context):
         main -> prepare -> review; main -> recover [label="error"]; prepare -> recover [label="error"]; }
     ```"""
     repo, binding, state = shared_repo(context), context['binding'], context['state']
-    if not args.thread:
-        args.thread = state['reply_parent'] = post(context, '/note Feature review thread.')['id']
     feature = git(repo, 'rev-parse', 'HEAD')
-    state['changes'] = json.loads(args.changes)
+    try:
+        changes = json.loads(args.changes)
+    except json.JSONDecodeError as error:
+        raise ValueError('Supply --changes as a JSON object mapping changed file paths to behavior explanations, not prose.') from error
+    report = diff_report(repo, binding, changes=changes)
+    if not args.thread:
+        args.thread = state['reply_parent'] = post(context, args.summary + '\n\n' + report)['id']
+    state['changes'] = changes
     state.setdefault('submitted', state.get('commit', context['issue']['metadata'].get('git_base_commit', '')))
     state.pop('integrated', None)
-    state.update(commit=feature, feature=feature_link(repo, binding, feature), diff=diff_report(repo, binding, changes=state['changes']),
+    state.update(commit=feature, feature=feature_link(repo, binding, feature), diff=report,
                  submission={'main_subject': args.main_subject})
     result = prepare_review(args, context)
     if result['phase'] == 'integration_error':
