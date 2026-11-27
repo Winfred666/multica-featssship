@@ -7,6 +7,7 @@ from featssship import (DELEGATION_KEY, DISPATCH_KEY, check_repo, cli, config_re
 from github_issue import issue_link
 from experiment import dispatch_experiment
 from environment import prepare_environment
+from thread import wake_callback
 from batch import (configured, view, outer_owner, outer_view, refresh, request_changes,
                    save_progress, DRAFT_PROMPT, OUTER_PROMPT, REPLY_GUIDANCE)
 from sop import FINISHED, Option, Parameter, State, Workflow
@@ -42,7 +43,16 @@ def dispatch(args, context):
             failures.append('issues[' + str(index) + '] ' + request['name'] + ': ' + str(error))
     if failures:
         save_progress(context)
-        raise ValueError('\n'.join(failures))
+        message = ('Dispatch incomplete. Preserve this approved batch and its child/worktree checkpoints. '
+                   'Diagnose the errors below; for a connection failure check connectivity and retry confirm once. '
+                   'Fetch remote main before preparing any remaining branch; do not reset existing feature work, '
+                   'replay approval or create duplicate children. If still blocked, report the exact blocker.\n\n' +
+                   '\n'.join(failures))
+        if not record.get('recovery_requested'):
+            wake_callback(context, context['main']['assignee_id'], message)
+            record['recovery_requested'] = True
+            save_progress(context)
+        raise ValueError(message)
     cli('issue', 'metadata', 'delete', context['issue_id'], '--key', DISPATCH_KEY)
 
 
