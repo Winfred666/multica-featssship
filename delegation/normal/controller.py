@@ -6,6 +6,7 @@ from featssship import (DELEGATION_KEY, DISPATCH_KEY, check_repo, cli, config_re
                        git, has_manual, link_config, request_config)
 from github_issue import issue_link
 from experiment import dispatch_experiment
+from environment import prepare_environment
 from batch import (configured, view, outer_owner, outer_view, refresh, request_changes,
                    save_progress, DRAFT_PROMPT, OUTER_PROMPT, REPLY_GUIDANCE)
 from sop import FINISHED, Option, Parameter, State, Workflow
@@ -79,6 +80,7 @@ def dispatch_item(context, request, record, index):
             raise ValueError('The feature worktree belongs to another branch.')
         record['branch_base'] = git(worktree, 'rev-parse', 'HEAD')
         save_progress(context)
+    prepare_environment(repo, worktree)
     skill = Path('.agents/skills/multica-featssship-develop-review')
     if not (worktree / skill).exists():
         shutil.copytree(repo / skill, worktree / skill,
@@ -107,6 +109,7 @@ def dispatch_item(context, request, record, index):
     link_config(child['id'], {**context['reference'], 'index': index}, DELEGATION_KEY)
     description = (request['request'] + '\n\nScope: ' + request['scope'] +
                    '\n\nTest: `' + request['test_command'] + '`' +
+                   '\n\nBefore dependency changes/npm install, unlink a linked node_modules and run npm ci --include=dev for a private install. Never mutate the shared snapshot. Detach linked .env before branch-specific edits.' +
                    '\n\nUse the prepared feature worktree: ' + str(worktree) + '\n\n' +
                    entry_command('multica-featssship-develop-review'))
     cli('issue', 'update', child['id'], '--description-stdin', '--no-start', input=description)

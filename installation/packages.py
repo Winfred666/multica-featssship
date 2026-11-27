@@ -33,7 +33,7 @@ def build(role, destination, *, name=None):
     else:
         (destination / 'PROJECT.md').unlink(missing_ok=True)
     if role == 'delegation':
-        for filename in ('batch.py', 'github_issue.py', 'experiment.py'):
+        for filename in ('batch.py', 'github_issue.py', 'experiment.py', 'environment.py'):
             shutil.copyfile(DELEGATION / 'common' / filename, destination / filename)
         shutil.copyfile(DELEGATION / 'split' / 'PROJECT.md', destination / 'PROJECT.md')
     elif role == 'installation':

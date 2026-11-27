@@ -105,3 +105,23 @@ before scoring. Different agent IDs or folders are not isolation. See the
 [private evaluation contract](docs/workflow.md#private-evaluation-boundary).
 
 感谢 [LINUX DO](https://linux.do/) 社区的支持。
+
+## Branch environments
+
+Normal dispatch preserves existing branch environments. It links missing ignored
+`.env*` files to MAIN's ignored originals; tracked examples and existing files stay
+untouched. No secret values enter the delegation config or tracked files.
+
+For identical package.json, package-lock.json and .npmrc, installed MAIN npm
+modules seed one reusable snapshot in Git's common `featsship-envs/` directory.
+New children link to that snapshot, not mutable MAIN node_modules. Different
+inputs or missing MAIN modules run isolated `npm ci --include=dev` using npm's
+normal cache. Installation failure retains the child/worktree for dispatch retry.
+Existing Python environments are not changed.
+
+**Before changing dependencies or running npm install/ci in a linked child:**
+check `test -L node_modules`, unlink only that symlink (`unlink node_modules`),
+then run `npm ci --include=dev` for the current lockfile before npm install.
+Never install into or edit the shared snapshot. MAIN installs use MAIN's own
+node_modules, so cannot invalidate an existing snapshot. Detach a linked .env
+before branch-specific edits; otherwise edits intentionally affect MAIN's file.

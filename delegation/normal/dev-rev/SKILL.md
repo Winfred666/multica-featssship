@@ -9,6 +9,11 @@ Inputs: the delegated issue's request, scope and verification command.
 From the prepared issue worktree on MAIN's selected branch, run
 `multica sop run multica-featssship-develop-review`.
 
+Before dependency changes or npm install/ci, detach a linked node_modules with
+`test ! -L node_modules || unlink node_modules`, then run `npm ci --include=dev`
+to create a private branch install. Never edit shared dependency snapshots.
+Detach linked .env files before branch-specific edits.
+
 Keep one feature commit; amend corrections without switching branches.
 Before submit, inspect pending main product changes and pass a meaningful
 `--main-subject`, usually `simplify(<scope>): <change>`, when main needs a commit.
