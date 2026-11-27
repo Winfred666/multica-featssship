@@ -37,17 +37,10 @@ def outer_owner(context):
                                   else 'Review passed. Approve integration or return corrections to Developer.')}
 
 
-def handoff_guidance(context, role, message):
-    recipient, state = owner(role)(context), context['state']
-    explanation = ('Fill <brief explanation> from the actual feature context. '
-                   if role == 'developer' else '')
-    return ('Post the following handoff with `multica issue comment add ' + context['issue_id'] +
-            ' --parent ' + reply_parent(context) + ' --content-file <file>`; do not put it only in the final response. '
-            'Use the facts and links below without retrieving them again. ' + explanation +
-            'Then directly and silently end this turn; do not run the receiving role’s callback.\n\n'
-            f'[@{recipient["name"]}](mention://agent/{recipient["id"]}) {message}\n\n' +
-            ('Impact: <brief explanation>\n\n' if role == 'developer' else '') +
-            f'Submitted revision: {state["feature"]}\n\n{state["diff"]}')
+def handoff(context, role, message):
+    state = context['state']
+    return handoff_on_save(context, role,
+                           message + f'\n\nSubmitted revision: {state["feature"]}\n\n{state["diff"]}')
 
 
 def review_view(context):
@@ -216,7 +209,7 @@ def submit(args, context):
     if result['phase'] == 'integration_error':
         return wake_recovery(context)
     message = args.summary + '\n\nVerified: `' + binding['test_command'] + '` passed.'
-    result['this_round_reply_guidance'] = handoff_guidance(context, 'reviewer', message)
+    result.update(handoff(context, 'reviewer', message))
     return result
 
 
@@ -322,7 +315,7 @@ def verdict(args, context):
         cli('issue', 'status', context['issue_id'], 'in_progress')
         if context['phase'] == 'manual_approve':
             return handoff_on_save(context, 'developer', 'Corrections requested: ' + args.finding)
-        return {'this_round_reply_guidance': handoff_guidance(context, 'developer', args.finding)}
+        return handoff(context, 'developer', args.finding)
     return {}
 
 
