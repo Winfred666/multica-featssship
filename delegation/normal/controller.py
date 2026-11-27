@@ -7,7 +7,7 @@ from featssship import (DELEGATION_KEY, DISPATCH_KEY, check_repo, cli, config_re
 from github_issue import issue_link
 from experiment import dispatch_experiment
 from environment import prepare_environment
-from thread import wake_callback
+from thread import post
 from batch import (configured, view, outer_owner, outer_view, refresh, request_changes,
                    save_progress, DRAFT_PROMPT, OUTER_PROMPT, REPLY_GUIDANCE)
 from sop import FINISHED, Option, Parameter, State, Workflow
@@ -49,7 +49,7 @@ def dispatch(args, context):
                    'replay approval or create duplicate children. If still blocked, report the exact blocker.\n\n' +
                    '\n'.join(failures))
         if not record.get('recovery_requested'):
-            wake_callback(context, context['main']['assignee_id'], message)
+            post(context, '[@MAIN](mention://agent/' + context['main']['assignee_id'] + ') ' + message)
             record['recovery_requested'] = True
             save_progress(context)
         raise ValueError(message)
