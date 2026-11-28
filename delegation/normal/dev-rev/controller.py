@@ -20,8 +20,11 @@ INTEGRATION_PROMPT = ('Reviewer: quickly judge and recover this integration/publ
                       'Repair within existing authorization without editing tracked product code or bypassing required checks. '
                       'Hash changes from a clean rebase alone do not require source rework. '
                       'Human working edits on main are stashed/restored during integration; restore conflicts stay on main, not Developer rework. '
-                      'Resolve a conflict when the intended newer feature is clear; commit time alone is not semantic evidence. '
-                      'Otherwise report the ambiguity to MAIN with report_conflict. '
+                      'A clean main working tree does not imply a conflict-free feature replay. '
+                      'Return actual source conflict resolution to Developer via rework, preserving the retained rebase; '
+                      'resolved code needs submission, fresh review and approval. '
+                      'Use report_conflict only for ambiguous upstream versus incoming intent, '
+                      'never for a wrong working directory or branch-selection error. '
                       'Choose rework only when Developer corrections are needed; retain submission, review and any required outer approval.')
 
 
@@ -119,8 +122,17 @@ def enter_develop(context):
     return {}
 
 
+def feature_repo(context):
+    common = Path(git(Path.cwd(), 'rev-parse', '--path-format=absolute', '--git-common-dir'))
+    repo = common / 'featsship' / context['issue_id']
+    if not repo.is_dir():
+        raise ValueError('The prepared issue feature worktree is missing: ' + str(repo))
+    os.chdir(repo)
+    return repo
+
+
 def shared_repo(context):
-    repo = Path.cwd()
+    repo = feature_repo(context)
     clean(repo)
     check_repo(repo, context['binding'])
     branch = git(repo, 'branch', '--show-current')
@@ -358,7 +370,7 @@ def merge_approved(args, context):
         check -> rebase -> finish;
         rebase -> judge [label="error"]; finish -> judge [label="error"]; }
     ```"""
-    repo, binding, state = Path.cwd(), context['binding'], context['state']
+    repo, binding, state = feature_repo(context), context['binding'], context['state']
     commit = state.get('integrated', state['commit'])
     try:
         check_repo(repo, binding)
